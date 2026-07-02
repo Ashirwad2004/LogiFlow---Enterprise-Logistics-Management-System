@@ -1,0 +1,251 @@
+from typing import Any
+from fastapi import APIRouter, Depends, HTTPException, Query
+from sqlalchemy.orm import Session
+from app.api.deps import get_db, get_current_user
+from app.models.user import User
+from app.models.shipment import Shipment, ShipmentItem
+from app.schemas.shipment import ShipmentCreate, ShipmentListResponse, Shipment as ShipmentSchema, ShipmentUpdate
+from datetime import datetime
+import uuid
+
+router = APIRouter()
+
+def generate_tracking_number() -> str:
+    # A simple generator for LF-YYYY-RANDOM
+    import random
+    year = datetime.now().year
+    rand_num = random.randint(100000, 999999)
+    return f"LF-{year}-{rand_num}"
+
+@router.post("/", status_code=201)
+def create_shipment(
+    *,
+    db: Session = Depends(get_db),
+    shipment_in: ShipmentCreate,
+    current_user: User = Depends(get_current_user)
+) -> Any:
+    # Create Shipment
+    tracking_num = generate_tracking_number()
+    db_shipment = Shipment(
+        company_id=current_user.company_id,
+        tracking_number=tracking_num,
+        customer_id=shipment_in.customer_id,
+        warehouse_id=shipment_in.warehouse_id,
+        driver_id=shipment_in.driver_id,
+        status="pending",
+        pickup_address=shipment_in.pickup_address,
+        delivery_address=shipment_in.delivery_address,
+        estimated_delivery=shipment_in.estimated_delivery,
+    )
+    db.add(db_shipment)
+    db.commit()
+    db.refresh(db_shipment)
+    
+    # Add Items
+    if shipment_in.items:
+        for item_in in shipment_in.items:
+            db_item = ShipmentItem(
+                shipment_id=db_shipment.id,
+                description=item_in.description,
+                quantity=item_in.quantity,
+                weight_kg=item_in.weight_kg,
+                dimensions=item_in.dimensions
+            )
+            db.add(db_item)
+        db.commit()
+    
+    from app.services.audit import log_action
+    log_action(
+        db=db,
+        user_id=current_user.id,
+        action="create_shipment",
+        table_name="shipments",
+        record_id=db_shipment.id,
+        new_values={"tracking_number": db_shipment.tracking_number, "status": db_shipment.status}
+    )
+    
+    return {
+        "id": db_shipment.id,
+        "tracking_number": db_shipment.tracking_number,
+        "status": db_shipment.status,
+        "created_at": db_shipment.created_at
+    }
+
+@router.get("/", response_model=ShipmentListResponse)
+def read_shipments(
+    db: Session = Depends(get_db),
+    page: int = 1,
+    size: int = 20,
+    status: str = Query(None),
+    search: str = Query(None),
+    current_user: User = Depends(get_current_user)
+) -> Any:
+    from app.models.customer import Customer
+    from app.models.driver import Driver
+
+    query = db.query(
+        Shipment,
+        Customer.name.label("customer_name"),
+        User.full_name.label("driver_name")
+    ).join(
+        Customer, Shipment.customer_id == Customer.id
+    ).outerjoin(
+        Driver, Shipment.driver_id == Driver.id
+    ).outerjoin(
+        User, Driver.user_id == User.id
+    ).filter(
+        Shipment.company_id == current_user.company_id
+    )
+    
+    if status:
+        query = query.filter(Shipment.status == status)
+    if search:
+        query = query.filter(Shipment.tracking_number.ilike(f"%{search}%"))
+        
+    total = query.count()
+    results = query.offset((page - 1) * size).limit(size).all()
+    
+    # Calculate pages
+    pages = (total + size - 1) // size
+    
+    items = []
+    for shipment, cust_name, drv_name in results:
+        shipment.customer_name = cust_name
+        shipment.driver_name = drv_name
+        items.append(shipment)
+    
+    return {
+        "items": items,
+        "total": total,
+        "page": page,
+        "size": size,
+        "pages": pages
+    }
+
+@router.get("/{shipment_id}", response_model=ShipmentSchema)
+def read_shipment(
+    shipment_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+) -> Any:
+    from app.models.customer import Customer
+    from app.models.driver import Driver
+
+    result = db.query(
+        Shipment,
+        Customer.name.label("customer_name"),
+        User.full_name.label("driver_name")
+    ).join(
+        Customer, Shipment.customer_id == Customer.id
+    ).outerjoin(
+        Driver, Shipment.driver_id == Driver.id
+    ).outerjoin(
+        User, Driver.user_id == User.id
+    ).filter(
+        Shipment.id == shipment_id,
+        Shipment.company_id == current_user.company_id
+    ).first()
+    
+    if not result:
+        raise HTTPException(status_code=404, detail="Shipment not found")
+        
+    shipment, cust_name, drv_name = result
+    shipment.customer_name = cust_name
+    shipment.driver_name = drv_name
+    return shipment
+
+@router.put("/{shipment_id}", response_model=ShipmentSchema)
+def update_shipment(
+    shipment_id: str,
+    shipment_in: ShipmentUpdate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+) -> Any:
+    """
+    Update shipment details (e.g. driver assignment, status, actual delivery, POD).
+    If status transitions to 'delivered', automatically generate an Invoice with GST.
+    """
+    shipment = db.query(Shipment).filter(
+        Shipment.id == shipment_id,
+        Shipment.company_id == current_user.company_id
+    ).first()
+    
+    if not shipment:
+        raise HTTPException(status_code=404, detail="Shipment not found")
+        
+    old_status = shipment.status
+    old_values = {
+        "status": shipment.status,
+        "driver_id": str(shipment.driver_id) if shipment.driver_id else None
+    }
+    
+    # Update fields
+    update_data = shipment_in.model_dump(exclude_unset=True)
+    for field, value in update_data.items():
+        setattr(shipment, field, value)
+        
+    # If transitioning to delivered, generate invoice
+    if shipment.status == "delivered" and old_status != "delivered":
+        # Calculate invoice amount
+        base_rate = 50.00
+        item_charge = 0.00
+        for item in shipment.items:
+            weight = float(item.weight_kg or 0.0)
+            quantity = int(item.quantity or 1)
+            item_charge += quantity * weight * 0.50 # $0.50 per kg
+            
+        subtotal = base_rate + item_charge
+        gst_amount = subtotal * 0.18 # 18% GST
+        total_amount = subtotal + gst_amount
+        
+        # Check if invoice already exists
+        from app.models.invoice import Invoice
+        existing_invoice = db.query(Invoice).filter(Invoice.shipment_id == shipment.id).first()
+        if not existing_invoice:
+            import random
+            inv_number = f"INV-{datetime.now().year}-{random.randint(100000, 999999)}"
+            db_invoice = Invoice(
+                shipment_id=shipment.id,
+                invoice_number=inv_number,
+                subtotal=subtotal,
+                tax_amount=gst_amount,
+                total_amount=total_amount,
+                status="unpaid",
+                issued_at=datetime.utcnow()
+            )
+            db.add(db_invoice)
+            
+    db.add(shipment)
+    db.commit()
+    db.refresh(shipment)
+    
+    new_values = {
+        "status": shipment.status,
+        "driver_id": str(shipment.driver_id) if shipment.driver_id else None
+    }
+    
+    from app.services.audit import log_action
+    log_action(
+        db=db,
+        user_id=current_user.id,
+        action="update_shipment",
+        table_name="shipments",
+        record_id=shipment.id,
+        old_values=old_values,
+        new_values=new_values
+    )
+    
+    # Attach names for Pydantic serialization compatibility
+    from app.models.customer import Customer
+    from app.models.driver import Driver
+    
+    cust = db.query(Customer).filter(Customer.id == shipment.customer_id).first()
+    shipment.customer_name = cust.name if cust else None
+    
+    if shipment.driver_id:
+        drv_user = db.query(User).join(Driver, Driver.user_id == User.id).filter(Driver.id == shipment.driver_id).first()
+        shipment.driver_name = drv_user.full_name if drv_user else None
+    else:
+        shipment.driver_name = None
+        
+    return shipment

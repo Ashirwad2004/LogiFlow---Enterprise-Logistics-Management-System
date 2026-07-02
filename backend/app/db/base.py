@@ -8,3 +8,6 @@ from app.models.vehicle import Vehicle
 from app.models.driver import Driver
 from app.models.warehouse import Warehouse
 from app.models.shipment import Shipment, ShipmentItem, ShipmentTracking
+from app.models.invoice import Invoice
+from app.models.payment import Payment
+from app.models.audit_log import AuditLog

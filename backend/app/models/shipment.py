@@ -1,5 +1,6 @@
 from sqlalchemy import Column, String, TIMESTAMP, text, ForeignKey, Integer, Numeric
 from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy.orm import relationship
 from app.db.base_class import Base
 
 class Shipment(Base):
@@ -20,6 +21,8 @@ class Shipment(Base):
     qr_code_data = Column(String)
     created_at = Column(TIMESTAMP, server_default=text("now()"))
 
+    items = relationship("ShipmentItem", back_populates="shipment", cascade="all, delete-orphan")
+
 class ShipmentItem(Base):
     __tablename__ = "shipment_items"
     
@@ -29,6 +32,8 @@ class ShipmentItem(Base):
     quantity = Column(Integer, nullable=False)
     weight_kg = Column(Numeric(10, 2))
     dimensions = Column(String(100))
+
+    shipment = relationship("Shipment", back_populates="items")
 
 class ShipmentTracking(Base):
     __tablename__ = "shipment_tracking"
