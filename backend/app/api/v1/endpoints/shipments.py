@@ -80,6 +80,7 @@ def create_shipment(
         "id": db_shipment.id,
         "tracking_number": db_shipment.tracking_number,
         "status": db_shipment.status,
+        "qr_code_data": db_shipment.qr_code_data,
         "created_at": db_shipment.created_at
     }
 

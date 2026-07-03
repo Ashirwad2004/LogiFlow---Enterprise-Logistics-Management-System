@@ -40,6 +40,20 @@ def get_current_user(
         raise HTTPException(status_code=404, detail="User not found")
     if not user.is_active:
         raise HTTPException(status_code=400, detail="Inactive user")
+        
+    # Check if company subscription is suspended (Super Admin bypasses)
+    if user.company_id:
+        from app.models.company import Company
+        company = db.query(Company).filter(Company.id == user.company_id).first()
+        if company and company.subscription_status == "suspended":
+            from app.models.role import Role
+            role = db.query(Role).filter(Role.id == user.role_id).first()
+            if not role or role.name != "Super Admin":
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="Subscription suspended. Please contact platform support."
+                )
+            
     return user
 
 def check_role(allowed_roles: List[str]):

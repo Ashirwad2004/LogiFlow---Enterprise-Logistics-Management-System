@@ -17,6 +17,8 @@ import InvoicesList from './features/billing/InvoicesList';
 import WarehousesList from './features/warehouses/WarehousesList';
 import SettingsPage from './features/settings/SettingsPage';
 import PublicTrack from './features/tracking/PublicTrack';
+import AuditLogs from './features/audit/AuditLogs';
+import SaaSManagement from './features/saas/SaaSManagement';
 
 const ProtectedRoute = () => {
   const { user, loading } = useAuth();
@@ -58,6 +60,8 @@ const AppRoutes = () => {
           <Route path="/warehouses" element={<WarehousesList />} />
           <Route path="/billing" element={<InvoicesList />} />
           <Route path="/settings" element={<SettingsPage />} />
+          <Route path="/audit-logs" element={<AuditLogs />} />
+          <Route path="/saas" element={<SaaSManagement />} />
         </Route>
       </Route>
     </Routes>

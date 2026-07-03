@@ -99,6 +99,7 @@ def get_warehouse_sections(
                     "quantity": item.quantity,
                     "weight_kg": float(item.weight_kg or 0.0),
                     "dimensions": item.dimensions,
+                    "status": item.status,
                     "shipment_id": str(item.shipment_id)
                 })
                 
@@ -266,6 +267,7 @@ def get_unassigned_items(
             "quantity": item.quantity,
             "weight_kg": float(item.weight_kg or 0.0),
             "dimensions": item.dimensions,
+            "status": item.status,
             "shipment_id": str(item.shipment_id),
             "tracking_number": item.shipment.tracking_number
         })
@@ -382,4 +384,76 @@ def remove_item_from_rack(
     )
     
     return {"success": True, "message": "Item removed from rack."}
+
+@router.post("/items/{item_id}/check-in")
+def check_in_item(
+    item_id: UUID,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(check_role(["Warehouse Mgr"]))
+):
+    """
+    Confirm arrival and check in a cargo package at the warehouse.
+    """
+    item = db.query(ShipmentItem).join(Shipment).filter(
+        ShipmentItem.id == item_id,
+        Shipment.company_id == current_user.company_id
+    ).first()
+    if not item:
+        raise HTTPException(status_code=404, detail="Shipment item not found.")
+        
+    old_status = item.status
+    item.status = "received"
+    db.add(item)
+    db.commit()
+    
+    log_action(
+        db=db,
+        user_id=current_user.id,
+        action="check_in_shipment_item",
+        table_name="shipment_items",
+        record_id=item.id,
+        new_values={
+            "description": item.description,
+            "old_status": old_status,
+            "new_status": "received"
+        }
+    )
+    
+    return {"success": True, "message": "Cargo item successfully checked in.", "status": "received"}
+
+@router.post("/items/{item_id}/dispatch")
+def dispatch_item(
+    item_id: UUID,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(check_role(["Warehouse Mgr"]))
+):
+    """
+    Confirm dispatch / loading cargo package onto vehicle.
+    """
+    item = db.query(ShipmentItem).join(Shipment).filter(
+        ShipmentItem.id == item_id,
+        Shipment.company_id == current_user.company_id
+    ).first()
+    if not item:
+        raise HTTPException(status_code=404, detail="Shipment item not found.")
+        
+    old_status = item.status
+    item.status = "dispatched"
+    db.add(item)
+    db.commit()
+    
+    log_action(
+        db=db,
+        user_id=current_user.id,
+        action="dispatch_shipment_item",
+        table_name="shipment_items",
+        record_id=item.id,
+        new_values={
+            "description": item.description,
+            "old_status": old_status,
+            "new_status": "dispatched"
+        }
+    )
+    
+    return {"success": True, "message": "Cargo item successfully dispatched.", "status": "dispatched"}
 

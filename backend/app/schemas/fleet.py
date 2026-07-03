@@ -1,5 +1,5 @@
 from pydantic import BaseModel
-from typing import Optional
+from typing import Optional, List
 from datetime import date, datetime
 from uuid import UUID
 
@@ -16,10 +16,30 @@ class VehicleBase(BaseModel):
 class VehicleCreate(VehicleBase):
     pass
 
+class VehicleMaintenanceLogResponse(BaseModel):
+    id: UUID
+    vehicle_id: UUID
+    description: str
+    cost: float
+    performed_at: date
+    next_due: Optional[date] = None
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
+
+class VehicleMaintenanceLogCreate(BaseModel):
+    description: str
+    cost: float
+    performed_at: date
+    next_due: Optional[date] = None
+    vehicle_status: Optional[str] = "maintenance"
+
 class VehicleResponse(VehicleBase):
     id: UUID
     company_id: UUID
     created_at: datetime
+    maintenance_logs: List[VehicleMaintenanceLogResponse] = []
 
     class Config:
         from_attributes = True

@@ -5,7 +5,8 @@ from app.api.deps import get_db, get_current_user, check_role
 from app.models.user import User
 from app.models.vehicle import Vehicle
 from app.models.driver import Driver
-from app.schemas.fleet import VehicleCreate, VehicleResponse, DriverCreate, DriverResponse
+from app.schemas.fleet import VehicleCreate, VehicleResponse, DriverCreate, DriverResponse, VehicleMaintenanceLogCreate, VehicleMaintenanceLogResponse
+from uuid import UUID
 
 router = APIRouter()
 
@@ -57,4 +58,44 @@ def get_drivers(db: Session = Depends(get_db), current_user: User = Depends(chec
         driver.full_name = full_name
         drivers.append(driver)
     return drivers
+
+@router.post("/vehicles/{vehicle_id}/maintenance", response_model=VehicleMaintenanceLogResponse, status_code=status.HTTP_201_CREATED)
+def log_vehicle_maintenance(
+    vehicle_id: UUID,
+    log_in: VehicleMaintenanceLogCreate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(check_role(["Company Admin", "Super Admin"]))
+):
+    from app.models.maintenance import VehicleMaintenanceLog
+    vehicle = db.query(Vehicle).filter(Vehicle.id == vehicle_id, Vehicle.company_id == current_user.company_id).first()
+    if not vehicle:
+        raise HTTPException(status_code=404, detail="Vehicle not found.")
+    
+    db_log = VehicleMaintenanceLog(
+        vehicle_id=vehicle_id,
+        description=log_in.description,
+        cost=log_in.cost,
+        performed_at=log_in.performed_at,
+        next_due=log_in.next_due
+    )
+    db.add(db_log)
+    
+    if log_in.vehicle_status:
+        vehicle.status = log_in.vehicle_status
+        db.add(vehicle)
+        
+    db.commit()
+    db.refresh(db_log)
+    
+    from app.services.audit import log_action
+    log_action(
+        db=db,
+        user_id=current_user.id,
+        action="log_vehicle_maintenance",
+        table_name="vehicle_maintenance_logs",
+        record_id=db_log.id,
+        new_values={"description": db_log.description, "cost": float(db_log.cost)}
+    )
+    return db_log
+
 

@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from typing import List, Any
-from app.api.deps import get_db, get_current_user
+from app.api.deps import get_db, get_current_user, check_role
 from app.models.user import User
 from app.models.audit_log import AuditLog
 from app.schemas.audit_log import AuditLogResponse
@@ -11,7 +11,7 @@ router = APIRouter()
 @router.get("/", response_model=List[AuditLogResponse])
 def get_audit_logs(
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)
+    current_user: User = Depends(check_role(["Company Admin", "Super Admin"]))
 ) -> Any:
     """
     Retrieve all audit logs for the logged-in user's company tenant.

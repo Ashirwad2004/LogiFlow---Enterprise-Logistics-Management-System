@@ -15,3 +15,6 @@ class Vehicle(Base):
     status = Column(String(50), default="active")
     insurance_expiry = Column(Date)
     created_at = Column(TIMESTAMP, server_default=text("now()"))
+
+    from sqlalchemy.orm import relationship
+    maintenance_logs = relationship("VehicleMaintenanceLog", back_populates="vehicle", cascade="all, delete-orphan")

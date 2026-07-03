@@ -140,18 +140,43 @@ const LiveTracking: React.FC = () => {
     }
   }, [selectedShipmentId, shipments]);
 
-  // 5. Polling for updates when tab is active
+  // 5. WebSocket stream for updates
   useEffect(() => {
-    let pollInterval: any;
-    if (selectedShipmentId && !autoSimActive) {
-      pollInterval = setInterval(() => {
-        fetchTrackingHistory(selectedShipmentId);
-      }, 5000);
-    }
-    return () => {
-      if (pollInterval) clearInterval(pollInterval);
+    if (!selectedShipmentId) return;
+    
+    const wsProto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+    const wsUrl = `${wsProto}//127.0.0.1:8000/api/v1/tracking/ws/${selectedShipmentId}`;
+    const socket = new WebSocket(wsUrl);
+    
+    socket.onmessage = (event) => {
+      try {
+        const pt = JSON.parse(event.data);
+        setHistory(prev => {
+          const isDuplicate = prev.some(
+            h => Math.abs(h.latitude - pt.latitude) < 0.000001 && 
+                 Math.abs(h.longitude - pt.longitude) < 0.000001
+          );
+          if (isDuplicate) return prev;
+          return [
+            ...prev,
+            {
+              id: Math.random().toString(),
+              latitude: pt.latitude,
+              longitude: pt.longitude,
+              speed_kmh: pt.speed_kmh,
+              timestamp: pt.timestamp
+            }
+          ];
+        });
+      } catch (err) {
+        console.error('Failed to parse websocket coordinates', err);
+      }
     };
-  }, [selectedShipmentId, autoSimActive]);
+    
+    return () => {
+      socket.close();
+    };
+  }, [selectedShipmentId]);
 
   // 6. Draw path and markers on Map
   useEffect(() => {

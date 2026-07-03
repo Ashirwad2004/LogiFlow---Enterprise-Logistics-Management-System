@@ -1,16 +1,44 @@
 from typing import Any, List
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, WebSocket, WebSocketDisconnect
 from sqlalchemy.orm import Session
 from app.api.deps import get_db, get_current_user, check_role
 from app.models.user import User
 from app.models.shipment import Shipment, ShipmentTracking
 from app.schemas.tracking import TrackingCoordinates, TrackingResponse, TrackingPointResponse
 from datetime import datetime
+import redis
+import json
 
 router = APIRouter()
 
+class ConnectionManager:
+    def __init__(self):
+        self.active_connections: dict[str, list[WebSocket]] = {}
+        
+    async def connect(self, shipment_id: str, websocket: WebSocket):
+        await websocket.accept()
+        if shipment_id not in self.active_connections:
+            self.active_connections[shipment_id] = []
+        self.active_connections[shipment_id].append(websocket)
+        
+    def disconnect(self, shipment_id: str, websocket: WebSocket):
+        if shipment_id in self.active_connections:
+            self.active_connections[shipment_id].remove(websocket)
+            if not self.active_connections[shipment_id]:
+                del self.active_connections[shipment_id]
+                
+    async def broadcast_to_shipment(self, shipment_id: str, message: dict):
+        if shipment_id in self.active_connections:
+            for connection in self.active_connections[shipment_id]:
+                try:
+                    await connection.send_json(message)
+                except Exception:
+                    pass
+
+manager = ConnectionManager()
+
 @router.post("/coordinates", response_model=TrackingResponse)
-def update_coordinates(
+async def update_coordinates(
     *,
     db: Session = Depends(get_db),
     tracking_in: TrackingCoordinates,
@@ -34,6 +62,27 @@ def update_coordinates(
     
     db.add(tracking_record)
     db.commit()
+    
+    # Update Redis cache
+    try:
+        r = redis.Redis(host="localhost", port=6379, db=0, decode_responses=True, socket_connect_timeout=0.1, socket_timeout=0.1)
+        r.hset(f"tracking:shipment:{shipment.id}", mapping={
+            "latitude": str(tracking_in.latitude),
+            "longitude": str(tracking_in.longitude),
+            "speed_kmh": str(tracking_in.speed_kmh),
+            "timestamp": datetime.utcnow().isoformat()
+        })
+    except Exception as e:
+        print("Failed to cache coordinates in Redis:", e)
+        
+    # Broadcast to WebSockets
+    payload = {
+        "latitude": float(tracking_in.latitude),
+        "longitude": float(tracking_in.longitude),
+        "speed_kmh": float(tracking_in.speed_kmh or 0.0),
+        "timestamp": datetime.utcnow().isoformat()
+    }
+    await manager.broadcast_to_shipment(str(shipment.id), payload)
     
     return {
         "success": True,
@@ -98,7 +147,6 @@ def get_public_shipment_tracking(
     if shipment.status == "delivered":
         invoice = db.query(Invoice).filter(Invoice.shipment_id == shipment.id).first()
         if invoice:
-            # Load company to get billing details
             from app.models.company import Company
             company = db.query(Company).filter(Company.id == shipment.company_id).first()
             invoice_data = {
@@ -150,3 +198,28 @@ def get_public_shipment_tracking(
         ],
         "invoice": invoice_data
     }
+
+@router.websocket("/ws/{shipment_id}")
+async def websocket_tracking(websocket: WebSocket, shipment_id: str):
+    await manager.connect(shipment_id, websocket)
+    try:
+        # Push cached telemetry immediately upon connection
+        try:
+            r = redis.Redis(host="localhost", port=6379, db=0, decode_responses=True, socket_connect_timeout=0.1, socket_timeout=0.1)
+            cached = r.hgetall(f"tracking:shipment:{shipment_id}")
+            if cached:
+                await websocket.send_json({
+                    "latitude": float(cached["latitude"]),
+                    "longitude": float(cached["longitude"]),
+                    "speed_kmh": float(cached["speed_kmh"]),
+                    "timestamp": cached["timestamp"]
+                })
+        except Exception:
+            pass
+
+        while True:
+            await websocket.receive_text()
+    except WebSocketDisconnect:
+        manager.disconnect(shipment_id, websocket)
+    except Exception:
+        manager.disconnect(shipment_id, websocket)

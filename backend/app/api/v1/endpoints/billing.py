@@ -1,7 +1,9 @@
 from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
-from typing import List
+from typing import List, Optional
 from datetime import datetime
+from uuid import UUID
 from app.api.deps import get_db, get_current_user, check_role
 from app.models.user import User
 from app.models.invoice import Invoice
@@ -104,4 +106,282 @@ def get_payments_for_invoice(invoice_id: str, db: Session = Depends(get_db), cur
         raise HTTPException(status_code=404, detail="Invoice not found or access denied.")
         
     return db.query(Payment).filter(Payment.invoice_id == invoice_id).all()
+
+@router.get("/invoices/{invoice_id}/pdf")
+def get_invoice_pdf(
+    invoice_id: UUID,
+    db: Session = Depends(get_db)
+):
+    """
+    Generate and download a beautifully formatted tax invoice PDF.
+    """
+    from app.models.company import Company
+    from app.models.customer import Customer
+    import io
+    from datetime import timedelta
+    from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
+    from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+    from reportlab.lib import colors
+    
+    invoice = db.query(Invoice).filter(Invoice.id == invoice_id).first()
+    if not invoice:
+        raise HTTPException(status_code=404, detail="Invoice not found.")
+        
+    shipment = db.query(Shipment).filter(Shipment.id == invoice.shipment_id).first()
+    if not shipment:
+        raise HTTPException(status_code=404, detail="Shipment not found.")
+        
+    company = db.query(Company).filter(Company.id == shipment.company_id).first()
+    customer = db.query(Customer).filter(Customer.id == shipment.customer_id).first()
+    
+    # PDF generation in memory
+    buffer = io.BytesIO()
+    doc = SimpleDocTemplate(buffer, pagesize=(612, 792), rightMargin=40, leftMargin=40, topMargin=40, bottomMargin=40)
+    story = []
+    
+    styles = getSampleStyleSheet()
+    primary_color = colors.HexColor("#1e3a8a")
+    secondary_color = colors.HexColor("#475569")
+    
+    title_style = ParagraphStyle(
+        'InvoiceTitle',
+        parent=styles['Heading1'],
+        fontName='Helvetica-Bold',
+        fontSize=22,
+        textColor=primary_color,
+        spaceAfter=10
+    )
+    
+    company_style = ParagraphStyle(
+        'CompanyHeader',
+        parent=styles['Normal'],
+        fontName='Helvetica-Bold',
+        fontSize=12,
+        textColor=primary_color,
+        spaceAfter=3
+    )
+    
+    normal_style = ParagraphStyle(
+        'NormalText',
+        parent=styles['Normal'],
+        fontName='Helvetica',
+        fontSize=9,
+        textColor=secondary_color,
+        spaceAfter=2
+    )
+
+    bold_style = ParagraphStyle(
+        'BoldText',
+        parent=styles['Normal'],
+        fontName='Helvetica-Bold',
+        fontSize=9,
+        textColor=colors.black,
+        spaceAfter=2
+    )
+    
+    header_data = [
+        [
+            Paragraph(f"<b>{company.name if company else 'LogiFlow Cargo'}</b>", company_style),
+            Paragraph(f"<b>TAX INVOICE</b>", ParagraphStyle('TaxInv', parent=title_style, alignment=2))
+        ],
+        [
+            Paragraph(f"{company.address if company else 'Logistics Depot St 15'}<br/>Support: {company.support_email if company else 'support@logiflow.com'}", normal_style),
+            Paragraph(f"<b>Invoice #:</b> {invoice.invoice_number}<br/><b>Date:</b> {invoice.issued_at.strftime('%Y-%m-%d') if invoice.issued_at else ''}<br/><b>Due Date:</b> {(invoice.issued_at + timedelta(days=15)).strftime('%Y-%m-%d') if invoice.issued_at else 'Immediate'}", ParagraphStyle('RightText', parent=normal_style, alignment=2))
+        ]
+    ]
+    header_table = Table(header_data, colWidths=[260, 260])
+    header_table.setStyle(TableStyle([
+        ('VALIGN', (0,0), (-1,-1), 'TOP'),
+        ('BOTTOMPADDING', (0,0), (-1,-1), 0),
+    ]))
+    story.append(header_table)
+    story.append(Spacer(1, 20))
+    
+    bill_data = [
+        [
+            Paragraph("<b>CLIENT BILL TO:</b>", bold_style),
+            Paragraph("<b>ROUTE INFO:</b>", bold_style)
+        ],
+        [
+            Paragraph(f"<b>Name:</b> {customer.name if customer else 'Client Partner'}<br/><b>Email:</b> {customer.email if customer else ''}<br/><b>Billing Address:</b> {customer.billing_address if customer else 'N/A'}", normal_style),
+            Paragraph(f"<b>Tracking #:</b> {shipment.tracking_number}<br/><b>Pickup:</b> {shipment.pickup_address}<br/><b>Delivery:</b> {shipment.delivery_address}", normal_style)
+        ]
+    ]
+    bill_table = Table(bill_data, colWidths=[260, 260])
+    bill_table.setStyle(TableStyle([
+        ('VALIGN', (0,0), (-1,-1), 'TOP'),
+        ('BOTTOMPADDING', (0,0), (-1,-1), 0),
+    ]))
+    story.append(bill_table)
+    story.append(Spacer(1, 25))
+    
+    items_data = [
+        [
+            Paragraph("<b>Sl.</b>", bold_style),
+            Paragraph("<b>Cargo Package Description</b>", bold_style),
+            Paragraph("<b>Qty</b>", bold_style),
+            Paragraph("<b>Unit Price (USD)</b>", bold_style),
+            Paragraph("<b>Total Amount (USD)</b>", bold_style)
+        ]
+    ]
+    
+    tax_pct = float(company.tax_rate) if company and company.tax_rate else 18.00
+    total_due = float(invoice.total_amount)
+    subtotal = total_due / (1 + (tax_pct / 100.0))
+    tax_amount = total_due - subtotal
+    
+    items_list = shipment.items
+    if items_list:
+        for idx, item in enumerate(items_list, 1):
+            qty = int(item.quantity or 1)
+            weight = float(item.weight_kg or 0.0)
+            item_price = subtotal / len(items_list) / qty
+            item_total = item_price * qty
+            items_data.append([
+                Paragraph(str(idx), normal_style),
+                Paragraph(f"{item.description} ({weight} kg)", normal_style),
+                Paragraph(str(qty), normal_style),
+                Paragraph(f"${item_price:.2f}", normal_style),
+                Paragraph(f"${item_total:.2f}", normal_style)
+            ])
+    else:
+        items_data.append([
+            Paragraph("1", normal_style),
+            Paragraph("Freight Carriage Logistics Service Cargo", normal_style),
+            Paragraph("1", normal_style),
+            Paragraph(f"${subtotal:.2f}", normal_style),
+            Paragraph(f"${subtotal:.2f}", normal_style)
+        ])
+        
+    items_table = Table(items_data, colWidths=[30, 240, 50, 100, 100])
+    items_table.setStyle(TableStyle([
+        ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),
+        ('BACKGROUND', (0,0), (-1,0), colors.HexColor("#f1f5f9")),
+        ('GRID', (0,0), (-1,-1), 0.5, colors.HexColor("#cbd5e1")),
+        ('BOTTOMPADDING', (0,0), (-1,-1), 8),
+        ('TOPPADDING', (0,0), (-1,-1), 8),
+    ]))
+    story.append(items_table)
+    story.append(Spacer(1, 15))
+    
+    summary_data = [
+        [Paragraph("", normal_style), Paragraph("<b>Subtotal:</b>", ParagraphStyle('Sub', parent=normal_style, alignment=2)), Paragraph(f"${subtotal:.2f}", ParagraphStyle('Val', parent=normal_style, alignment=2))],
+        [Paragraph("", normal_style), Paragraph(f"<b>GST Tax ({tax_pct:.2f}%):</b>", ParagraphStyle('Tax', parent=normal_style, alignment=2)), Paragraph(f"${tax_amount:.2f}", ParagraphStyle('Val', parent=normal_style, alignment=2))],
+        [Paragraph("", normal_style), Paragraph("<b>Total Payable Due:</b>", ParagraphStyle('Tot', parent=bold_style, alignment=2)), Paragraph(f"${total_due:.2f}", ParagraphStyle('ValBold', parent=bold_style, alignment=2))]
+    ]
+    summary_table = Table(summary_data, colWidths=[280, 140, 100])
+    summary_table.setStyle(TableStyle([
+        ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),
+        ('BOTTOMPADDING', (0,0), (-1,-1), 4),
+        ('TOPPADDING', (0,0), (-1,-1), 4),
+    ]))
+    story.append(summary_table)
+    story.append(Spacer(1, 40))
+    
+    footer_style = ParagraphStyle(
+        'FooterText',
+        parent=styles['Normal'],
+        fontName='Helvetica-Oblique',
+        fontSize=8,
+        textColor=colors.HexColor("#64748b"),
+        alignment=1,
+        spaceAfter=2
+    )
+    story.append(Paragraph("Thank you for your business with LogiFlow Cargo Logistics!", ParagraphStyle('BoldFooter', parent=footer_style, fontName='Helvetica-Bold')))
+    story.append(Paragraph("This is a computer-generated tax receipt document. No physical signature is required.", footer_style))
+    story.append(Paragraph("LogiFlow Cargo Inc. — Compliance Audited Ledger System.", footer_style))
+    
+    doc.build(story)
+    buffer.seek(0)
+    
+    return StreamingResponse(
+        buffer,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f"attachment; filename=invoice-{invoice.invoice_number}.pdf"}
+    )
+
+@router.get("/reports")
+def get_billing_reports(
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(check_role(["Accountant", "Company Admin", "Super Admin"]))
+):
+    """
+    Retrieve aggregated financial tax and revenue reports for the tenant company.
+    """
+    from typing import Optional
+    
+    query = db.query(Invoice).join(Shipment, Invoice.shipment_id == Shipment.id).filter(
+        Shipment.company_id == current_user.company_id
+    )
+    
+    if start_date:
+        try:
+            start_dt = datetime.strptime(start_date, "%Y-%m-%d")
+            query = query.filter(Invoice.issued_at >= start_dt)
+        except ValueError:
+            pass
+            
+    if end_date:
+        try:
+            end_dt = datetime.strptime(end_date, "%Y-%m-%d")
+            query = query.filter(Invoice.issued_at <= end_dt)
+        except ValueError:
+            pass
+            
+    invoices = query.all()
+    
+    gross_revenue = 0.0
+    pending_receivables = 0.0
+    tax_collected = 0.0
+    discounts_given = 0.0
+    monthly_data = {}
+    
+    for inv in invoices:
+        tot = float(inv.total_amount)
+        sub = float(inv.subtotal)
+        tax = float(inv.tax_amount)
+        disc = float(inv.discount_amount or 0.0)
+        
+        if inv.status == "paid":
+            gross_revenue += tot
+            tax_collected += tax
+            discounts_given += disc
+        elif inv.status == "unpaid":
+            pending_receivables += tot
+            
+        if inv.issued_at:
+            month_key = inv.issued_at.strftime("%b %Y")
+            if month_key not in monthly_data:
+                monthly_data[month_key] = {"revenue": 0.0, "tax": 0.0}
+            if inv.status == "paid":
+                monthly_data[month_key]["revenue"] += tot
+                monthly_data[month_key]["tax"] += tax
+
+    def parse_month_key(key):
+        try:
+            return datetime.strptime(key, "%b %Y")
+        except Exception:
+            return datetime.min
+            
+    sorted_months = sorted(monthly_data.keys(), key=parse_month_key)
+    monthly_trend = [
+        {
+            "month": m,
+            "revenue": monthly_data[m]["revenue"],
+            "tax": monthly_data[m]["tax"]
+        }
+        for m in sorted_months
+    ]
+    
+    return {
+        "gross_revenue": gross_revenue,
+        "pending_receivables": pending_receivables,
+        "tax_collected": tax_collected,
+        "discounts_given": discounts_given,
+        "monthly_trend": monthly_trend
+    }
+
+
 

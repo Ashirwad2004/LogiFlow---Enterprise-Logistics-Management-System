@@ -16,7 +16,8 @@ import {
   ArrowRight,
   ShieldCheck,
   Building,
-  CheckCircle2
+  CheckCircle2,
+  Download
 } from 'lucide-react';
 
 const API_BASE_URL = 'http://127.0.0.1:8000/api/v1';
@@ -105,6 +106,46 @@ const PublicTrack: React.FC = () => {
     fetchTracking(searchQuery.trim().toUpperCase());
   };
 
+  useEffect(() => {
+    if (!trackingData?.id) return;
+    const wsProto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+    const wsUrl = `${wsProto}//127.0.0.1:8000/api/v1/tracking/ws/${trackingData.id}`;
+    const socket = new WebSocket(wsUrl);
+    
+    socket.onmessage = (event) => {
+      try {
+        const pt = JSON.parse(event.data);
+        setTrackingData(prev => {
+          if (!prev) return null;
+          const isDuplicate = prev.tracking_history.some(
+            h => Math.abs(h.latitude - pt.latitude) < 0.000001 && 
+                 Math.abs(h.longitude - pt.longitude) < 0.000001
+          );
+          if (isDuplicate) return prev;
+          return {
+            ...prev,
+            tracking_history: [
+              ...prev.tracking_history,
+              {
+                latitude: pt.latitude,
+                longitude: pt.longitude,
+                speed_kmh: pt.speed_kmh,
+                status_update: 'GPS Live Update',
+                timestamp: pt.timestamp
+              }
+            ]
+          };
+        });
+      } catch (err) {
+        console.error('Failed to parse websocket coordinates', err);
+      }
+    };
+    
+    return () => {
+      socket.close();
+    };
+  }, [trackingData?.id]);
+
   // Map initialization and updates
   useEffect(() => {
     if (!trackingData || !mapContainerRef.current) return;
@@ -191,6 +232,12 @@ const PublicTrack: React.FC = () => {
 
   const handlePrintInvoice = () => {
     window.print();
+  };
+
+  const handleDownloadPDF = () => {
+    if (!trackingData || !trackingData.invoice) return;
+    const url = `${API_BASE_URL}/billing/invoices/${trackingData.invoice.id}/pdf`;
+    window.open(url, '_blank');
   };
 
   return (
@@ -443,12 +490,20 @@ const PublicTrack: React.FC = () => {
                     <span className="font-bold text-slate-800 text-xs uppercase tracking-wider flex items-center gap-1.5">
                       <Receipt className="w-4 h-4 text-slate-500" /> GST Tax Invoice
                     </span>
-                    <button
-                      onClick={handlePrintInvoice}
-                      className="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs rounded-md shadow-xs transition-colors cursor-pointer flex items-center gap-1"
-                    >
-                      <Printer className="w-3.5 h-3.5" /> Print Invoice
-                    </button>
+                    <div className="flex gap-2">
+                      <button
+                        onClick={handleDownloadPDF}
+                        className="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs rounded-md shadow-xs transition-colors cursor-pointer flex items-center gap-1"
+                      >
+                        <Download className="w-3.5 h-3.5" /> PDF
+                      </button>
+                      <button
+                        onClick={handlePrintInvoice}
+                        className="px-3 py-1.5 border border-slate-300 hover:bg-slate-50 text-slate-700 font-bold text-xs rounded-md shadow-xs transition-colors cursor-pointer flex items-center gap-1"
+                      >
+                        <Printer className="w-3.5 h-3.5" /> Print
+                      </button>
+                    </div>
                   </div>
 
                   {/* Print Document Layout */}

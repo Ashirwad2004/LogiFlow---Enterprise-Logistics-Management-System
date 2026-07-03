@@ -26,6 +26,7 @@ const CreateShipment: React.FC = () => {
 
   const [formData, setFormData] = useState({
     customer_id: '',
+    warehouse_id: '',
     pickup_address: '',
     delivery_address: '',
     estimated_delivery: '',
@@ -37,7 +38,10 @@ const CreateShipment: React.FC = () => {
     weight_kg: '',
   });
 
-  // Fetch Customers on Mount
+  const [warehouses, setWarehouses] = useState<any[]>([]);
+  const [loadingWarehouses, setLoadingWarehouses] = useState(true);
+
+  // Fetch Customers and Warehouses on Mount
   useEffect(() => {
     const fetchCustomers = async () => {
       try {
@@ -52,8 +56,37 @@ const CreateShipment: React.FC = () => {
         setLoadingCustomers(false);
       }
     };
+
+    const fetchWarehouses = async () => {
+      try {
+        const response = await api.get('/warehouses');
+        setWarehouses(response.data);
+        if (response.data.length > 0) {
+          setFormData(prev => ({ 
+            ...prev, 
+            warehouse_id: response.data[0].id,
+            pickup_address: `${response.data[0].name}, ${response.data[0].address}`
+          }));
+        }
+      } catch (err) {
+        console.error('Failed to load warehouses', err);
+      } finally {
+        setLoadingWarehouses(false);
+      }
+    };
+
     fetchCustomers();
+    fetchWarehouses();
   }, []);
+
+  const handleWarehouseChange = (whId: string) => {
+    const selectedWh = warehouses.find(w => w.id === whId);
+    setFormData(prev => ({
+      ...prev,
+      warehouse_id: whId,
+      pickup_address: selectedWh ? `${selectedWh.name}, ${selectedWh.address}` : prev.pickup_address
+    }));
+  };
 
   const handleQuickAddCustomer = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -174,6 +207,31 @@ const CreateShipment: React.FC = () => {
                     >
                       {customers.map(c => (
                         <option key={c.id} value={c.id}>{c.name} ({c.email})</option>
+                      ))}
+                    </select>
+                  )}
+                </div>
+              </div>
+
+              <div className="sm:col-span-2">
+                <label htmlFor="warehouse_id" className="block text-sm font-medium text-slate-700">Origin Warehouse Branch (Stock Source)</label>
+                <div className="mt-1">
+                  {loadingWarehouses ? (
+                    <div className="text-sm text-slate-500 py-2.5 pl-2 border border-dashed border-slate-200 rounded-lg">Loading branches...</div>
+                  ) : warehouses.length === 0 ? (
+                    <div className="text-sm text-rose-600 bg-rose-50 border border-rose-200 rounded-lg p-3">
+                      No warehouses registered. Please create a warehouse branch first to store cargo packages.
+                    </div>
+                  ) : (
+                    <select
+                      id="warehouse_id"
+                      required
+                      value={formData.warehouse_id}
+                      onChange={(e) => handleWarehouseChange(e.target.value)}
+                      className="block w-full px-3 py-2.5 border border-slate-300 rounded-lg shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm bg-white transition-colors"
+                    >
+                      {warehouses.map(w => (
+                        <option key={w.id} value={w.id}>{w.name} ({w.address})</option>
                       ))}
                     </select>
                   )}

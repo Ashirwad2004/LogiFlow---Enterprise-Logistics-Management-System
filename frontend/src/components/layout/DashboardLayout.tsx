@@ -13,7 +13,9 @@ import {
   Settings,
   Users,
   Receipt,
-  Bell
+  Bell,
+  ShieldAlert,
+  Globe
 } from 'lucide-react';
 
 const DashboardLayout: React.FC = () => {
@@ -65,6 +67,8 @@ const DashboardLayout: React.FC = () => {
     { name: 'Fleet', path: '/fleet', icon: Users, roles: ['Company Admin', 'Super Admin', 'Dispatcher'] },
     { name: 'Warehouses', path: '/warehouses', icon: Building, roles: ['Company Admin', 'Super Admin', 'Warehouse Mgr', 'Dispatcher'] },
     { name: 'Billing', path: '/billing', icon: Receipt, roles: ['Company Admin', 'Super Admin', 'Accountant'] },
+    { name: 'Audit Logs', path: '/audit-logs', icon: ShieldAlert, roles: ['Company Admin', 'Super Admin'] },
+    { name: 'SaaS Portal', path: '/saas', icon: Globe, roles: ['Super Admin'] },
     { name: 'Settings', path: '/settings', icon: Settings, roles: ['Company Admin', 'Super Admin', 'Dispatcher', 'Driver', 'Warehouse Mgr', 'Accountant'] },
   ];
 

@@ -285,6 +285,34 @@ const WarehousesList: React.FC = () => {
     }
   };
 
+  const [actingItemId, setActingItemId] = useState('');
+
+  const handleCheckIn = async (itemId: string) => {
+    setActingItemId(itemId);
+    try {
+      await api.post(`/warehouses/items/${itemId}/check-in`);
+      await fetchSections(selectedWarehouseId);
+      await fetchUnassignedItems(selectedWarehouseId);
+    } catch (err: any) {
+      alert(err.response?.data?.detail || 'Failed to check in item.');
+    } finally {
+      setActingItemId('');
+    }
+  };
+
+  const handleDispatch = async (itemId: string) => {
+    setActingItemId(itemId);
+    try {
+      await api.post(`/warehouses/items/${itemId}/dispatch`);
+      await fetchSections(selectedWarehouseId);
+      await fetchUnassignedItems(selectedWarehouseId);
+    } catch (err: any) {
+      alert(err.response?.data?.detail || 'Failed to dispatch item.');
+    } finally {
+      setActingItemId('');
+    }
+  };
+
   const handleRackClick = (rack: Rack) => {
     setSelectedRackId(rack.id);
     setSelectedRack(rack);
@@ -513,6 +541,7 @@ const WarehousesList: React.FC = () => {
                                 <th className="px-3 py-2 text-left text-xs font-semibold text-slate-500 uppercase tracking-wider">Tracking</th>
                                 <th className="px-3 py-2 text-left text-xs font-semibold text-slate-500 uppercase tracking-wider">Description</th>
                                 <th className="px-3 py-2 text-left text-xs font-semibold text-slate-500 uppercase tracking-wider">Qty/Weight</th>
+                                <th className="px-3 py-2 text-left text-xs font-semibold text-slate-500 uppercase tracking-wider">Status</th>
                                 <th className="relative px-3 py-2"><span className="sr-only">Actions</span></th>
                               </tr>
                             </thead>
@@ -522,10 +551,42 @@ const WarehousesList: React.FC = () => {
                                   <td className="px-3 py-2 font-mono font-bold text-xs text-blue-600">{pkg.shipment_id.substring(0, 8)}...</td>
                                   <td className="px-3 py-2 font-semibold text-slate-800 text-xs">{pkg.description}</td>
                                   <td className="px-3 py-2 text-xs">{pkg.quantity}x ({pkg.weight_kg} kg)</td>
-                                  <td className="px-3 py-2 text-right">
+                                  <td className="px-3 py-2 text-xs">
+                                    <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold border ${
+                                      pkg.status?.toLowerCase() === 'received' 
+                                        ? 'bg-blue-50 text-blue-700 border-blue-150' 
+                                        : pkg.status?.toLowerCase() === 'dispatched'
+                                        ? 'bg-purple-50 text-purple-700 border-purple-150'
+                                        : 'bg-yellow-50 text-yellow-700 border-yellow-150'
+                                    }`}>
+                                      {(pkg.status || 'pending').toUpperCase()}
+                                    </span>
+                                  </td>
+                                  <td className="px-3 py-2 text-right space-x-2">
+                                    {(pkg.status || 'pending').toLowerCase() === 'pending' && (
+                                      <button
+                                        type="button"
+                                        onClick={() => handleCheckIn(pkg.id)}
+                                        disabled={actingItemId === pkg.id}
+                                        className="px-2 py-0.5 bg-blue-600 hover:bg-blue-700 text-white font-semibold text-[10px] rounded-md transition-colors cursor-pointer"
+                                      >
+                                        Check In
+                                      </button>
+                                    )}
+                                    {pkg.status?.toLowerCase() === 'received' && (
+                                      <button
+                                        type="button"
+                                        onClick={() => handleDispatch(pkg.id)}
+                                        disabled={actingItemId === pkg.id}
+                                        className="px-2 py-0.5 bg-purple-600 hover:bg-purple-700 text-white font-semibold text-[10px] rounded-md transition-colors cursor-pointer"
+                                      >
+                                        Dispatch
+                                      </button>
+                                    )}
                                     <button
+                                      type="button"
                                       onClick={() => handleRemoveItem(pkg.id)}
-                                      className="p-1 text-red-500 hover:bg-red-50 rounded-md transition-colors"
+                                      className="p-1 text-red-500 hover:bg-red-50 rounded-md transition-colors inline"
                                       title="Remove cargo from rack"
                                     >
                                       <Trash2 className="w-4 h-4" />
@@ -596,6 +657,8 @@ const WarehousesList: React.FC = () => {
                             <th className="px-3 py-2 text-left text-xs font-semibold text-slate-500 uppercase tracking-wider">Tracking #</th>
                             <th className="px-3 py-2 text-left text-xs font-semibold text-slate-500 uppercase tracking-wider">Description</th>
                             <th className="px-3 py-2 text-left text-xs font-semibold text-slate-500 uppercase tracking-wider">Weight</th>
+                            <th className="px-3 py-2 text-left text-xs font-semibold text-slate-500 uppercase tracking-wider">Status</th>
+                            <th className="relative px-3 py-2"><span className="sr-only">Actions</span></th>
                           </tr>
                         </thead>
                         <tbody className="bg-white divide-y divide-slate-100 text-slate-700">
@@ -604,6 +667,39 @@ const WarehousesList: React.FC = () => {
                               <td className="px-3 py-2 font-mono font-bold text-xs text-slate-900">{item.tracking_number}</td>
                               <td className="px-3 py-2 font-semibold text-slate-800 text-xs">{item.description}</td>
                               <td className="px-3 py-2 text-slate-500 text-xs">{item.weight_kg * item.quantity} kg</td>
+                              <td className="px-3 py-2 text-xs">
+                                <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold border ${
+                                  item.status?.toLowerCase() === 'received' 
+                                    ? 'bg-blue-50 text-blue-700 border-blue-150' 
+                                    : item.status?.toLowerCase() === 'dispatched'
+                                    ? 'bg-purple-50 text-purple-700 border-purple-150'
+                                    : 'bg-yellow-50 text-yellow-700 border-yellow-150'
+                                }`}>
+                                  {(item.status || 'pending').toUpperCase()}
+                                </span>
+                              </td>
+                              <td className="px-3 py-2 text-right space-x-2">
+                                {(item.status || 'pending').toLowerCase() === 'pending' && (
+                                  <button
+                                    type="button"
+                                    onClick={() => handleCheckIn(item.id)}
+                                    disabled={actingItemId === item.id}
+                                    className="px-2 py-0.5 bg-blue-600 hover:bg-blue-700 text-white font-semibold text-[10px] rounded-md transition-colors cursor-pointer"
+                                  >
+                                    Check In
+                                  </button>
+                                )}
+                                {item.status?.toLowerCase() === 'received' && (
+                                  <button
+                                    type="button"
+                                    onClick={() => handleDispatch(item.id)}
+                                    disabled={actingItemId === item.id}
+                                    className="px-2 py-0.5 bg-purple-600 hover:bg-purple-700 text-white font-semibold text-[10px] rounded-md transition-colors cursor-pointer"
+                                  >
+                                    Dispatch
+                                  </button>
+                                )}
+                              </td>
                             </tr>
                           ))}
                         </tbody>

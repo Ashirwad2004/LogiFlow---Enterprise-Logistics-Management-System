@@ -6,6 +6,7 @@ from app.models.role import Role
 from app.models.permission import Permission
 from app.models.customer import Customer
 from app.models.vehicle import Vehicle
+from app.models.maintenance import VehicleMaintenanceLog
 from app.models.driver import Driver
 from app.models.warehouse import Warehouse, WarehouseSection, WarehouseRack
 from app.models.shipment import Shipment, ShipmentItem, ShipmentTracking

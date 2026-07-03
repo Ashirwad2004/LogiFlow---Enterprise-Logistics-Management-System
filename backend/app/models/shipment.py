@@ -33,6 +33,7 @@ class ShipmentItem(Base):
     quantity = Column(Integer, nullable=False)
     weight_kg = Column(Numeric(10, 2))
     dimensions = Column(String(100))
+    status = Column(String(50), default="pending")
 
     shipment = relationship("Shipment", back_populates="items")
     rack = relationship("WarehouseRack", back_populates="items")
