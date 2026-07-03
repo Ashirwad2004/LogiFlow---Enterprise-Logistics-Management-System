@@ -1,4 +1,4 @@
-from typing import Generator
+from typing import Generator, List
 from fastapi import Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
 from jose import jwt, JWTError
@@ -31,8 +31,9 @@ def get_current_user(
         token_data = TokenPayload(**payload)
     except (JWTError, ValidationError):
         raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
+            status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Could not validate credentials",
+            headers={"WWW-Authenticate": "Bearer"},
         )
     user = db.query(User).filter(User.id == token_data.sub).first()
     if not user:
@@ -40,3 +41,18 @@ def get_current_user(
     if not user.is_active:
         raise HTTPException(status_code=400, detail="Inactive user")
     return user
+
+def check_role(allowed_roles: List[str]):
+    def role_dependency(current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+        from app.models.role import Role
+        role = db.query(Role).filter(Role.id == current_user.role_id).first()
+        role_name = role.name if role else "No Role"
+        if role_name in ["Company Admin", "Super Admin"]:
+            return current_user
+        if role_name not in allowed_roles:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"Access denied. Access restricted to roles: {', '.join(allowed_roles)} (Your role: {role_name})"
+            )
+        return current_user
+    return role_dependency

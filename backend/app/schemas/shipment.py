@@ -8,6 +8,7 @@ class ShipmentItemBase(BaseModel):
     quantity: int
     weight_kg: Optional[float] = None
     dimensions: Optional[str] = None
+    rack_id: Optional[UUID] = None
 
 class ShipmentItemCreate(ShipmentItemBase):
     pass

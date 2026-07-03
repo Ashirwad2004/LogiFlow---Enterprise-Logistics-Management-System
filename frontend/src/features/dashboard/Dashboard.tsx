@@ -11,7 +11,7 @@ interface MetricStats {
 }
 
 interface AlertItem {
-  id: number;
+  id: string;
   title: string;
   message: string;
   type: string;
@@ -26,6 +26,8 @@ const Dashboard: React.FC = () => {
     pending_revenue: 0.0
   });
   const [alerts, setAlerts] = useState<AlertItem[]>([]);
+  const [weeklyVolume, setWeeklyVolume] = useState<any[]>([]);
+  const [monthlyRevenue, setMonthlyRevenue] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -34,6 +36,8 @@ const Dashboard: React.FC = () => {
         const response = await api.get('/analytics/dashboard');
         setMetrics(response.data.metrics);
         setAlerts(response.data.alerts || []);
+        setWeeklyVolume(response.data.weekly_volume || []);
+        setMonthlyRevenue(response.data.monthly_revenue || []);
       } catch (err) {
         console.error("Failed to fetch dashboard data", err);
       } finally {
@@ -47,8 +51,23 @@ const Dashboard: React.FC = () => {
     { name: 'Active Shipments', value: metrics.active_shipments.toString(), icon: Package, change: '+12%', changeType: 'positive', path: '/shipments' },
     { name: 'Available Drivers', value: metrics.available_drivers.toString(), icon: Users, change: 'Optimal', changeType: 'neutral', path: '/fleet' },
     { name: 'Vehicles on Duty', value: metrics.active_vehicles.toString(), icon: Truck, change: 'Active', changeType: 'positive', path: '/vehicles' },
-    { name: 'Pending Invoices', value: `$${metrics.pending_revenue.toFixed(2)}`, icon: Receipt, change: '18% GST incl.', changeType: 'neutral', path: '/billing' },
+    { name: 'Pending Invoices', value: `$${metrics.pending_revenue.toFixed(2)}`, icon: Receipt, change: 'GST incl.', changeType: 'neutral', path: '/billing' },
   ];
+
+  // Calculate dynamic weekly volume line path coordinates
+  const maxWeeklyCount = Math.max(...weeklyVolume.map(v => v.count), 1);
+  const weeklyPoints = weeklyVolume.map((v, i) => ({
+    x: 40 + i * 53, // Spaced from 40 to 358
+    y: 120 - (v.count / maxWeeklyCount) * 80, // Scale it to fit the 40-120 range
+    day: v.day,
+    count: v.count
+  }));
+
+  const linePath = weeklyPoints.reduce((acc, pt, i) => i === 0 ? `M ${pt.x} ${pt.y}` : `${acc} L ${pt.x} ${pt.y}`, '');
+  const areaPath = weeklyPoints.length > 0 ? `${linePath} L ${weeklyPoints[weeklyPoints.length - 1].x} 120 L ${weeklyPoints[0].x} 120 Z` : '';
+
+  // Monthly revenue helper
+  const maxMonthlyRevenue = Math.max(...monthlyRevenue.map(m => m.revenue), 100);
 
   return (
     <div className="space-y-6">
@@ -69,7 +88,7 @@ const Dashboard: React.FC = () => {
           <button
             key={item.name}
             onClick={() => navigate(item.path)}
-            className="bg-white overflow-hidden shadow-sm border border-slate-200 rounded-xl p-5 hover:border-blue-500 hover:shadow-md transition-all text-left w-full cursor-pointer"
+            className="bg-white overflow-hidden shadow-sm border border-slate-200 rounded-xl p-5 hover:border-blue-500 hover:shadow-md transition-all text-left w-full cursor-pointer animate-fade-in"
           >
             <div className="flex items-center justify-between">
               <div>
@@ -107,45 +126,46 @@ const Dashboard: React.FC = () => {
           </div>
           
           <div className="h-44 w-full relative pt-2">
-            {/* Custom SVG Line Chart */}
-            <svg viewBox="0 0 400 150" className="w-full h-full">
-              <defs>
-                <linearGradient id="areaGrad" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="0%" stopColor="#3b82f6" stopOpacity="0.3"/>
-                  <stop offset="100%" stopColor="#3b82f6" stopOpacity="0.0"/>
-                </linearGradient>
-              </defs>
-              {/* Gridlines */}
-              <line x1="0" y1="30" x2="400" y2="30" stroke="#f1f5f9" strokeWidth="1" />
-              <line x1="0" y1="75" x2="400" y2="75" stroke="#f1f5f9" strokeWidth="1" />
-              <line x1="0" y1="120" x2="400" y2="120" stroke="#f1f5f9" strokeWidth="1" />
-              
-              {/* Area filled path */}
-              <path
-                d="M 10 130 Q 75 110 75 110 Q 140 40 140 40 Q 205 90 205 90 Q 270 50 270 50 Q 335 120 335 120 L 335 130 Z"
-                fill="url(#areaGrad)"
-              />
-              {/* Main Line path */}
-              <path
-                d="M 10 130 Q 75 110 75 110 Q 140 40 140 40 Q 205 90 205 90 Q 270 50 270 50 Q 335 120 335 120"
-                fill="none"
-                stroke="#2563eb"
-                strokeWidth="3.5"
-                strokeLinecap="round"
-              />
-              
-              {/* Dot Highlights */}
-              <circle cx="140" cy="40" r="5" fill="#2563eb" stroke="#ffffff" strokeWidth="2" />
-              <circle cx="270" cy="50" r="5" fill="#2563eb" stroke="#ffffff" strokeWidth="2" />
-              
-              {/* Text labels */}
-              <text x="10" y="145" fill="#94a3b8" fontSize="9" textAnchor="middle">Mon</text>
-              <text x="75" y="145" fill="#94a3b8" fontSize="9" textAnchor="middle">Tue</text>
-              <text x="140" y="145" fill="#94a3b8" fontSize="9" textAnchor="middle">Wed (Peak)</text>
-              <text x="205" y="145" fill="#94a3b8" fontSize="9" textAnchor="middle">Thu</text>
-              <text x="270" y="145" fill="#94a3b8" fontSize="9" textAnchor="middle">Fri</text>
-              <text x="335" y="145" fill="#94a3b8" fontSize="9" textAnchor="middle">Sat</text>
-            </svg>
+            {loading ? (
+              <div className="absolute inset-0 flex items-center justify-center text-xs text-slate-400">Loading weekly telemetry...</div>
+            ) : (
+              <svg viewBox="0 0 400 150" className="w-full h-full">
+                <defs>
+                  <linearGradient id="areaGrad" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="0%" stopColor="#3b82f6" stopOpacity="0.3"/>
+                    <stop offset="100%" stopColor="#3b82f6" stopOpacity="0.0"/>
+                  </linearGradient>
+                </defs>
+                {/* Gridlines */}
+                <line x1="0" y1="30" x2="400" y2="30" stroke="#f1f5f9" strokeWidth="1" />
+                <line x1="0" y1="75" x2="400" y2="75" stroke="#f1f5f9" strokeWidth="1" />
+                <line x1="0" y1="120" x2="400" y2="120" stroke="#f1f5f9" strokeWidth="1" />
+                
+                {weeklyPoints.length > 0 && (
+                  <>
+                    {/* Area filled path */}
+                    <path d={areaPath} fill="url(#areaGrad)" />
+                    {/* Main Line path */}
+                    <path d={linePath} fill="none" stroke="#2563eb" strokeWidth="3.5" strokeLinecap="round" />
+                    
+                    {/* Dot Highlights & Labels */}
+                    {weeklyPoints.map((pt, i) => (
+                      <g key={i}>
+                        <circle cx={pt.x} cy={pt.y} r="4.5" fill="#2563eb" stroke="#ffffff" strokeWidth="2" />
+                        {pt.count > 0 && (
+                          <text x={pt.x} y={pt.y - 8} fill="#1e293b" fontSize="8" fontWeight="bold" textAnchor="middle">
+                            {pt.count}
+                          </text>
+                        )}
+                        <text x={pt.x} y="140" fill="#94a3b8" fontSize="9" textAnchor="middle">
+                          {pt.day}
+                        </text>
+                      </g>
+                    ))}
+                  </>
+                )}
+              </svg>
+            )}
           </div>
         </div>
 
@@ -157,34 +177,35 @@ const Dashboard: React.FC = () => {
           </div>
           
           <div className="h-44 w-full relative pt-2">
-            {/* Custom SVG Bar Chart */}
-            <svg viewBox="0 0 400 150" className="w-full h-full">
-              {/* Gridlines */}
-              <line x1="0" y1="30" x2="400" y2="30" stroke="#f1f5f9" strokeWidth="1" />
-              <line x1="0" y1="75" x2="400" y2="75" stroke="#f1f5f9" strokeWidth="1" />
-              <line x1="0" y1="120" x2="400" y2="120" stroke="#f1f5f9" strokeWidth="1" />
-              
-              {/* Bars */}
-              {/* Bar 1 (April: $12k) */}
-              <rect x="40" y="80" width="35" height="50" rx="3" fill="#60a5fa" />
-              <text x="57" y="70" fill="#475569" fontSize="9" fontWeight="bold" textAnchor="middle">$12k</text>
-              <text x="57" y="145" fill="#94a3b8" fontSize="9" textAnchor="middle">April</text>
-
-              {/* Bar 2 (May: $18k) */}
-              <rect x="130" y="50" width="35" height="80" rx="3" fill="#3b82f6" />
-              <text x="147" y="40" fill="#475569" fontSize="9" fontWeight="bold" textAnchor="middle">$18k</text>
-              <text x="147" y="145" fill="#94a3b8" fontSize="9" textAnchor="middle">May</text>
-
-              {/* Bar 3 (June: $15k) */}
-              <rect x="220" y="65" width="35" height="65" rx="3" fill="#60a5fa" />
-              <text x="237" y="55" fill="#475569" fontSize="9" fontWeight="bold" textAnchor="middle">$15k</text>
-              <text x="237" y="145" fill="#94a3b8" fontSize="9" textAnchor="middle">June</text>
-
-              {/* Bar 4 (July: $24k) */}
-              <rect x="310" y="25" width="35" height="105" rx="3" fill="#1d4ed8" />
-              <text x="327" y="15" fill="#1d4ed8" fontSize="9" fontWeight="bold" textAnchor="middle">$24k</text>
-              <text x="327" y="145" fill="#94a3b8" fontSize="9" textAnchor="middle">July</text>
-            </svg>
+            {loading ? (
+              <div className="absolute inset-0 flex items-center justify-center text-xs text-slate-400">Loading revenue metrics...</div>
+            ) : (
+              <svg viewBox="0 0 400 150" className="w-full h-full">
+                {/* Gridlines */}
+                <line x1="0" y1="30" x2="400" y2="30" stroke="#f1f5f9" strokeWidth="1" />
+                <line x1="0" y1="75" x2="400" y2="75" stroke="#f1f5f9" strokeWidth="1" />
+                <line x1="0" y1="120" x2="400" y2="120" stroke="#f1f5f9" strokeWidth="1" />
+                
+                {monthlyRevenue.map((m, i) => {
+                  const width = 35;
+                  const height = (m.revenue / maxMonthlyRevenue) * 90; // scale up to 90px max height
+                  const x = 40 + i * 90;
+                  const y = 120 - height;
+                  
+                  return (
+                    <g key={i}>
+                      <rect x={x} y={y} width={width} height={height} rx={4} fill={i === 3 ? "#2563eb" : "#60a5fa"} />
+                      <text x={x + 17.5} y={y - 8} fill={i === 3 ? "#2563eb" : "#475569"} fontSize="8" fontWeight="bold" textAnchor="middle">
+                        {m.revenue > 0 ? `$${Math.round(m.revenue)}` : '$0'}
+                      </text>
+                      <text x={x + 17.5} y="140" fill="#94a3b8" fontSize="9" textAnchor="middle">
+                        {m.month.substring(0, 3)}
+                      </text>
+                    </g>
+                  );
+                })}
+              </svg>
+            )}
           </div>
         </div>
       </div>
@@ -205,7 +226,7 @@ const Dashboard: React.FC = () => {
                 </div>
               ) : (
                 alerts.map((alert) => (
-                  <div key={alert.id} className="flex p-4 border border-blue-100 bg-blue-50/30 rounded-lg">
+                  <div key={alert.id} className="flex p-4 border border-blue-100 bg-blue-50/30 rounded-lg animate-fade-in">
                     <AlertTriangle className="h-5 w-5 text-blue-500 mt-0.5 flex-shrink-0" />
                     <div className="ml-3">
                       <h3 className="text-sm font-semibold text-blue-900">{alert.title}</h3>

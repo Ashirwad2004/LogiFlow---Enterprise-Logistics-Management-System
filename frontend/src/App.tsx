@@ -16,6 +16,7 @@ import VehiclesList from './features/fleet/VehiclesList';
 import InvoicesList from './features/billing/InvoicesList';
 import WarehousesList from './features/warehouses/WarehousesList';
 import SettingsPage from './features/settings/SettingsPage';
+import PublicTrack from './features/tracking/PublicTrack';
 
 const ProtectedRoute = () => {
   const { user, loading } = useAuth();
@@ -38,7 +39,8 @@ const ProtectedRoute = () => {
 const AppRoutes = () => {
   return (
     <Routes>
-      <Route path="/" element={<Navigate to="/dashboard" replace />} />
+      <Route path="/" element={<PublicTrack />} />
+      <Route path="/track/:trackingNumber" element={<PublicTrack />} />
       <Route path="/login" element={<LoginPage />} />
       <Route path="/register" element={<RegisterPage />} />
       <Route path="/forgot-password" element={<ForgotPasswordPage />} />

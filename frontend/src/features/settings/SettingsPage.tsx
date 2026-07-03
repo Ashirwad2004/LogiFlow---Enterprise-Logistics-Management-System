@@ -26,11 +26,13 @@ interface TeamMember {
 const SettingsPage: React.FC = () => {
   const [activeTab, setActiveTab] = useState<'general' | 'team' | 'audit'>('general');
   
-  // General settings mock states
-  const [companyName, setCompanyName] = useState('LogiFlow Maharashtra');
-  const [supportEmail, setSupportEmail] = useState('support@logiflow-mh.com');
-  const [invoicePrefix, setInvoicePrefix] = useState('INV-MH');
+  // General settings states
+  const [companyName, setCompanyName] = useState('');
+  const [legalName, setLegalName] = useState('');
+  const [supportEmail, setSupportEmail] = useState('');
+  const [invoicePrefix, setInvoicePrefix] = useState('');
   const [taxRate, setTaxRate] = useState('18');
+  const [address, setAddress] = useState('');
   const [updatingSettings, setUpdatingSettings] = useState(false);
   const [settingsSaved, setSettingsSaved] = useState(false);
 
@@ -75,22 +77,55 @@ const SettingsPage: React.FC = () => {
     }
   };
 
+  const fetchCompanySettings = async () => {
+    try {
+      const response = await api.get('/auth/me');
+      const comp = response.data.company;
+      if (comp) {
+        setCompanyName(comp.name || '');
+        setLegalName(comp.legal_name || '');
+        setSupportEmail(comp.support_email || '');
+        setInvoicePrefix(comp.invoice_prefix || 'INV');
+        setTaxRate(comp.tax_rate ? String(comp.tax_rate) : '18');
+        setAddress(comp.address || '');
+      }
+    } catch (error) {
+      console.error('Failed to load company profile settings', error);
+    }
+  };
+
   useEffect(() => {
-    if (activeTab === 'audit') {
+    if (activeTab === 'general') {
+      fetchCompanySettings();
+    } else if (activeTab === 'audit') {
       fetchAuditLogs();
     } else if (activeTab === 'team') {
       fetchTeam();
     }
   }, [activeTab]);
 
-  const handleSaveSettings = (e: React.FormEvent) => {
+  const handleSaveSettings = async (e: React.FormEvent) => {
     e.preventDefault();
     setUpdatingSettings(true);
-    setTimeout(() => {
-      setUpdatingSettings(false);
+    setSettingsSaved(false);
+    try {
+      await api.put('/auth/company', {
+        name: companyName,
+        legal_name: legalName,
+        support_email: supportEmail,
+        invoice_prefix: invoicePrefix,
+        tax_rate: parseFloat(taxRate) || 18.00,
+        address: address
+      });
       setSettingsSaved(true);
       setTimeout(() => setSettingsSaved(false), 3000);
-    }, 1000);
+      // Refresh context or locally cached values
+      fetchCompanySettings();
+    } catch (error: any) {
+      alert(error.response?.data?.detail || 'Failed to save settings.');
+    } finally {
+      setUpdatingSettings(false);
+    }
   };
 
   const handleAddMember = async (e: React.FormEvent) => {
@@ -181,15 +216,28 @@ const SettingsPage: React.FC = () => {
             <Building className="w-5 h-5 mr-2 text-blue-500" /> Company Parameters
           </h3>
           <form onSubmit={handleSaveSettings} className="space-y-4">
-            <div>
-              <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wider">Company Name</label>
-              <input
-                type="text"
-                required
-                value={companyName}
-                onChange={(e) => setCompanyName(e.target.value)}
-                className="mt-1 block w-full px-3 py-2.5 border border-slate-300 rounded-lg text-sm bg-white focus:outline-none focus:ring-blue-500"
-              />
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wider">Company Display Name</label>
+                <input
+                  type="text"
+                  required
+                  value={companyName}
+                  onChange={(e) => setCompanyName(e.target.value)}
+                  className="mt-1 block w-full px-3 py-2 border border-slate-300 rounded-lg text-sm bg-white focus:outline-none focus:ring-blue-500"
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wider">Legal Entity Name</label>
+                <input
+                  type="text"
+                  required
+                  value={legalName}
+                  onChange={(e) => setLegalName(e.target.value)}
+                  placeholder="e.g. LogiFlow India Private Limited"
+                  className="mt-1 block w-full px-3 py-2 border border-slate-300 rounded-lg text-sm bg-white focus:outline-none focus:ring-blue-500"
+                />
+              </div>
             </div>
 
             <div>
@@ -199,7 +247,7 @@ const SettingsPage: React.FC = () => {
                 required
                 value={supportEmail}
                 onChange={(e) => setSupportEmail(e.target.value)}
-                className="mt-1 block w-full px-3 py-2.5 border border-slate-300 rounded-lg text-sm bg-white focus:outline-none focus:ring-blue-500"
+                className="mt-1 block w-full px-3 py-2 border border-slate-300 rounded-lg text-sm bg-white focus:outline-none focus:ring-blue-500"
               />
             </div>
 
@@ -211,7 +259,7 @@ const SettingsPage: React.FC = () => {
                   required
                   value={invoicePrefix}
                   onChange={(e) => setInvoicePrefix(e.target.value)}
-                  className="mt-1 block w-full px-3 py-2.5 border border-slate-300 rounded-lg text-sm bg-white focus:outline-none focus:ring-blue-500"
+                  className="mt-1 block w-full px-3 py-2 border border-slate-300 rounded-lg text-sm bg-white focus:outline-none focus:ring-blue-500"
                 />
               </div>
               <div>
@@ -221,9 +269,21 @@ const SettingsPage: React.FC = () => {
                   required
                   value={taxRate}
                   onChange={(e) => setTaxRate(e.target.value)}
-                  className="mt-1 block w-full px-3 py-2.5 border border-slate-300 rounded-lg text-sm bg-white focus:outline-none focus:ring-blue-500"
+                  className="mt-1 block w-full px-3 py-2 border border-slate-300 rounded-lg text-sm bg-white focus:outline-none focus:ring-blue-500"
                 />
               </div>
+            </div>
+
+            <div>
+              <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wider">Billing & Registered Address</label>
+              <textarea
+                required
+                rows={3}
+                value={address}
+                onChange={(e) => setAddress(e.target.value)}
+                placeholder="e.g. 100 Logistics Tech Way, Bandra East, Mumbai - 400051"
+                className="mt-1 block w-full px-3 py-2 border border-slate-300 rounded-lg text-sm bg-white focus:outline-none focus:ring-blue-500"
+              />
             </div>
 
             <div className="pt-4 border-t border-slate-100 flex items-center gap-3 justify-end">

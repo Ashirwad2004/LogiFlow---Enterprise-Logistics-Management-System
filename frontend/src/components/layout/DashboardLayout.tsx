@@ -1,6 +1,7 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import { Outlet, Link, useLocation } from 'react-router-dom';
 import { useAuth } from '../../core/AuthContext';
+import api from '../../core/api';
 import { 
   PackageSearch, 
   LayoutDashboard, 
@@ -11,22 +12,66 @@ import {
   User,
   Settings,
   Users,
-  Receipt
+  Receipt,
+  Bell
 } from 'lucide-react';
 
 const DashboardLayout: React.FC = () => {
   const { user, logout } = useAuth();
   const location = useLocation();
 
+  const [notifications, setNotifications] = useState<any[]>([]);
+  const [unreadCount, setUnreadCount] = useState(0);
+  const [showNotifications, setShowNotifications] = useState(false);
+
+  const fetchNotifications = async () => {
+    try {
+      const response = await api.get('/notifications');
+      setNotifications(response.data);
+      setUnreadCount(response.data.filter((n: any) => !n.is_read).length);
+    } catch (err) {
+      console.error("Failed to fetch notifications", err);
+    }
+  };
+
+  useEffect(() => {
+    fetchNotifications();
+    const interval = setInterval(fetchNotifications, 10000); // 10s polling
+    return () => clearInterval(interval);
+  }, []);
+
+  const handleMarkRead = async (id: string) => {
+    try {
+      await api.put(`/notifications/${id}/read`);
+      fetchNotifications();
+    } catch (err) {
+      console.error("Failed to mark read", err);
+    }
+  };
+
+  const handleMarkAllRead = async () => {
+    try {
+      await api.put('/notifications/read-all');
+      fetchNotifications();
+    } catch (err) {
+      console.error("Failed to mark all read", err);
+    }
+  };
+
   const navItems = [
-    { name: 'Dashboard', path: '/dashboard', icon: LayoutDashboard },
-    { name: 'Shipments', path: '/shipments', icon: Truck },
-    { name: 'Live Tracking', path: '/tracking', icon: MapPin },
-    { name: 'Fleet', path: '/fleet', icon: Users },
-    { name: 'Warehouses', path: '/warehouses', icon: Building },
-    { name: 'Billing', path: '/billing', icon: Receipt },
-    { name: 'Settings', path: '/settings', icon: Settings },
+    { name: 'Dashboard', path: '/dashboard', icon: LayoutDashboard, roles: ['Company Admin', 'Super Admin', 'Dispatcher', 'Driver', 'Warehouse Mgr', 'Accountant'] },
+    { name: 'Shipments', path: '/shipments', icon: Truck, roles: ['Company Admin', 'Super Admin', 'Dispatcher', 'Driver'] },
+    { name: 'Live Tracking', path: '/tracking', icon: MapPin, roles: ['Company Admin', 'Super Admin', 'Dispatcher', 'Driver'] },
+    { name: 'Fleet', path: '/fleet', icon: Users, roles: ['Company Admin', 'Super Admin', 'Dispatcher'] },
+    { name: 'Warehouses', path: '/warehouses', icon: Building, roles: ['Company Admin', 'Super Admin', 'Warehouse Mgr', 'Dispatcher'] },
+    { name: 'Billing', path: '/billing', icon: Receipt, roles: ['Company Admin', 'Super Admin', 'Accountant'] },
+    { name: 'Settings', path: '/settings', icon: Settings, roles: ['Company Admin', 'Super Admin', 'Dispatcher', 'Driver', 'Warehouse Mgr', 'Accountant'] },
   ];
+
+  const visibleNavItems = navItems.filter(item => {
+    const userRole = user?.role || '';
+    return item.roles.includes(userRole);
+  });
 
   return (
     <div className="flex h-screen bg-slate-50">
@@ -55,7 +100,7 @@ const DashboardLayout: React.FC = () => {
 
         <nav className="flex-1 overflow-y-auto py-4">
           <ul className="space-y-1 px-3">
-            {navItems.map((item) => {
+            {visibleNavItems.map((item) => {
               const isActive = location.pathname === item.path || location.pathname.startsWith(item.path + '/');
               return (
                 <li key={item.name}>
@@ -90,13 +135,82 @@ const DashboardLayout: React.FC = () => {
       {/* Main content */}
       <div className="flex-1 flex flex-col overflow-hidden">
         {/* Top Header */}
-        <header className="h-16 bg-white border-b border-slate-200 flex items-center justify-end px-8 shadow-sm">
-          <div className="flex items-center space-x-4">
-            <span className="text-sm font-medium text-slate-700">
-              Welcome, {user?.full_name}
-            </span>
-            <div className="h-8 w-8 rounded-full bg-slate-200 flex items-center justify-center">
-              <User className="h-4 w-4 text-slate-600" />
+        <header className="h-16 bg-white border-b border-slate-200 flex items-center justify-between px-8 shadow-sm">
+          <div className="flex items-center space-x-2">
+            <span className="text-sm font-bold text-slate-500 uppercase tracking-wider">{user?.company.name} Hub</span>
+          </div>
+
+          <div className="flex items-center space-x-6">
+            {/* Notification Bell Dropdown */}
+            <div className="relative">
+              <button
+                onClick={() => setShowNotifications(!showNotifications)}
+                className="relative p-2 text-slate-400 hover:text-slate-650 hover:bg-slate-100 rounded-full transition-all cursor-pointer"
+              >
+                <Bell className="h-6 w-6" />
+                {unreadCount > 0 && (
+                  <span className="absolute top-1 right-1 inline-flex items-center justify-center px-1.5 py-0.5 text-3xs font-extrabold leading-none text-red-100 bg-rose-600 rounded-full transform translate-x-0.5 -translate-y-0.5">
+                    {unreadCount}
+                  </span>
+                )}
+              </button>
+
+              {showNotifications && (
+                <div className="absolute right-0 mt-3 w-80 bg-white border border-slate-200 rounded-xl shadow-lg py-2 z-50 animate-fade-in">
+                  <div className="px-4 py-2 border-b border-slate-100 flex justify-between items-center">
+                    <span className="font-bold text-xs text-slate-800 uppercase tracking-wider">Recent Activity</span>
+                    {unreadCount > 0 && (
+                      <button
+                        onClick={handleMarkAllRead}
+                        className="text-xs font-bold text-blue-600 hover:underline cursor-pointer"
+                      >
+                        Mark all read
+                      </button>
+                    )}
+                  </div>
+                  <div className="max-h-64 overflow-y-auto">
+                    {notifications.length === 0 ? (
+                      <div className="px-4 py-8 text-center text-xs text-slate-400">
+                        No recent updates.
+                      </div>
+                    ) : (
+                      notifications.slice(0, 10).map((n) => (
+                        <div
+                          key={n.id}
+                          onClick={() => {
+                            handleMarkRead(n.id);
+                            setShowNotifications(false);
+                          }}
+                          className={`px-4 py-3 hover:bg-slate-50 cursor-pointer border-b border-slate-50 flex flex-col transition-colors ${
+                            !n.is_read ? 'bg-blue-50/20' : ''
+                          }`}
+                        >
+                          <div className="flex justify-between items-start">
+                            <span className={`text-xs font-bold ${!n.is_read ? 'text-slate-900' : 'text-slate-700'}`}>
+                              {n.title}
+                            </span>
+                            <span className="text-3xs text-slate-400 font-medium">
+                              {new Date(n.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                            </span>
+                          </div>
+                          <p className="text-xs text-slate-500 mt-1 leading-normal">
+                            {n.message}
+                          </p>
+                        </div>
+                      ))
+                    )}
+                  </div>
+                </div>
+              )}
+            </div>
+
+            <div className="flex items-center space-x-3">
+              <span className="text-sm font-medium text-slate-700">
+                {user?.full_name}
+              </span>
+              <div className="h-8 w-8 rounded-full bg-slate-200 flex items-center justify-center">
+                <User className="h-4 w-4 text-slate-650" />
+              </div>
             </div>
           </div>
         </header>

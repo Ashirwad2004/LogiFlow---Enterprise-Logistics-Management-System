@@ -1,7 +1,7 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import api from '../../core/api';
-import { ArrowLeft, Package, MapPin, Truck, CheckCircle, Clock, User, ShieldAlert, FileText, Send, Check, Loader2 } from 'lucide-react';
+import { ArrowLeft, Package, MapPin, Truck, CheckCircle, Clock, User, ShieldAlert, FileText, Send, Check, Loader2, AlertCircle } from 'lucide-react';
 
 const ShipmentDetails: React.FC = () => {
   const { id } = useParams<{ id: string }>();
@@ -16,8 +16,48 @@ const ShipmentDetails: React.FC = () => {
 
   // Delivery simulation state
   const [showDeliveryModal, setShowDeliveryModal] = useState(false);
-  const [podUrl, setPodUrl] = useState('https://s3.amazonaws.com/logiflow/pod/sig-7712.png');
-  const [qrCodeData, setQrCodeData] = useState('LF-QR-VERIFIED-7712');
+  const [qrCodeData, setQrCodeData] = useState('');
+  const [errorMessage, setErrorMessage] = useState('');
+
+  // Signature Pad state
+  const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const [isDrawing, setIsDrawing] = useState(false);
+
+  const startDrawing = (e: React.MouseEvent<HTMLCanvasElement>) => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+    
+    const rect = canvas.getBoundingClientRect();
+    ctx.beginPath();
+    ctx.moveTo(e.clientX - rect.left, e.clientY - rect.top);
+    setIsDrawing(true);
+  };
+
+  const draw = (e: React.MouseEvent<HTMLCanvasElement>) => {
+    if (!isDrawing) return;
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+    
+    const rect = canvas.getBoundingClientRect();
+    ctx.lineTo(e.clientX - rect.left, e.clientY - rect.top);
+    ctx.stroke();
+  };
+
+  const stopDrawing = () => {
+    setIsDrawing(false);
+  };
+
+  const clearCanvas = () => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+  };
 
   const fetchShipmentAndDrivers = async () => {
     try {
@@ -41,6 +81,18 @@ const ShipmentDetails: React.FC = () => {
     fetchShipmentAndDrivers();
   }, [id]);
 
+  useEffect(() => {
+    if (showDeliveryModal && canvasRef.current) {
+      const canvas = canvasRef.current;
+      const ctx = canvas.getContext('2d');
+      if (ctx) {
+        ctx.strokeStyle = '#2563eb';
+        ctx.lineWidth = 2.5;
+        ctx.lineCap = 'round';
+      }
+    }
+  }, [showDeliveryModal]);
+
   const handleAssignDriver = async (e: React.FormEvent) => {
     e.preventDefault();
     setAllocationLoading(true);
@@ -58,6 +110,7 @@ const ShipmentDetails: React.FC = () => {
 
   const handleUpdateStatus = async (newStatus: string, extraData = {}) => {
     setStatusLoading(true);
+    setErrorMessage('');
     try {
       const response = await api.put(`/shipments/${id}`, {
         status: newStatus,
@@ -65,11 +118,24 @@ const ShipmentDetails: React.FC = () => {
       });
       setShipment(response.data);
       setShowDeliveryModal(false);
-    } catch (error) {
+    } catch (error: any) {
       console.error('Failed to update status', error);
+      const detail = error.response?.data?.detail || 'Failed to update status. Verify inputs.';
+      setErrorMessage(detail);
     } finally {
       setStatusLoading(false);
     }
+  };
+
+  const submitDelivery = () => {
+    const canvas = canvasRef.current;
+    const signatureUrl = canvas ? canvas.toDataURL('image/png') : 'http://example.com/sig.png';
+    
+    handleUpdateStatus('delivered', {
+      proof_of_delivery_url: signatureUrl,
+      qr_code_data: qrCodeData,
+      actual_delivery: new Date().toISOString()
+    });
   };
 
   if (loading) {
@@ -167,6 +233,19 @@ const ShipmentDetails: React.FC = () => {
                   {shipment.estimated_delivery ? new Date(shipment.estimated_delivery).toLocaleString() : 'Not scheduled'}
                 </p>
               </div>
+              {shipment.qr_code_data && (
+                <div className="pt-3 border-t border-slate-100 flex flex-col items-center">
+                  <p className="text-xs text-slate-500 font-medium uppercase tracking-wider self-start mb-2">Package QR Barcode</p>
+                  <div className="bg-slate-50 p-2 rounded-lg border border-slate-100">
+                    <img
+                      src={`https://api.qrserver.com/v1/create-qr-code/?size=100x100&data=${encodeURIComponent(shipment.qr_code_data)}`}
+                      alt="Shipment QR Code"
+                      className="w-24 h-24"
+                    />
+                  </div>
+                  <span className="text-[10px] font-mono text-slate-400 mt-1">{shipment.qr_code_data}</span>
+                </div>
+              )}
             </div>
           </div>
         </div>
@@ -249,8 +328,12 @@ const ShipmentDetails: React.FC = () => {
                   <p className="text-xs text-slate-500">Cargo is in transit. Perform QR barcode check and sign to complete delivery.</p>
                   <button
                     type="button"
-                    onClick={() => setShowDeliveryModal(true)}
-                    className="w-full inline-flex justify-center items-center py-2.5 px-4 bg-emerald-600 hover:bg-emerald-700 text-white font-semibold text-sm rounded-lg transition-colors"
+                    onClick={() => {
+                      setQrCodeData('');
+                      setErrorMessage('');
+                      setShowDeliveryModal(true);
+                    }}
+                    className="w-full inline-flex justify-center items-center py-2.5 px-4 bg-emerald-600 hover:bg-emerald-700 text-white font-semibold text-sm rounded-lg transition-colors animate-pulse"
                   >
                     <CheckCircle className="mr-2 h-5 w-5" />
                     Deliver & Upload POD (QR Scan)
@@ -265,6 +348,12 @@ const ShipmentDetails: React.FC = () => {
                   <div className="text-xs text-emerald-600">
                     Proof of Delivery signature and QR checks are verified. GST Billing invoice was automatically generated.
                   </div>
+                  {shipment.proof_of_delivery_url && shipment.proof_of_delivery_url.startsWith('data:image') && (
+                    <div className="pt-2">
+                      <p className="text-2xs font-semibold text-slate-500 uppercase">Captured POD Signature</p>
+                      <img src={shipment.proof_of_delivery_url} alt="POD Signature" className="h-16 border border-slate-200 rounded mt-1 bg-white" />
+                    </div>
+                  )}
                   <Link
                     to="/billing"
                     className="inline-flex items-center text-xs font-bold text-emerald-700 hover:text-emerald-900 transition-colors"
@@ -320,7 +409,7 @@ const ShipmentDetails: React.FC = () => {
               <button 
                 type="button"
                 onClick={() => setShowDeliveryModal(false)}
-                className="text-slate-400 hover:text-slate-600 text-lg font-bold"
+                className="text-slate-400 hover:text-slate-650 text-xl font-bold transition-all cursor-pointer"
               >
                 &times;
               </button>
@@ -331,26 +420,58 @@ const ShipmentDetails: React.FC = () => {
                 Simulating driver verification checks (QR scan of package + signature capture).
               </div>
 
+              {errorMessage && (
+                <div className="bg-rose-50 border border-rose-200 rounded-lg p-3 text-xs text-rose-800 flex items-start">
+                  <AlertCircle className="w-4 h-4 mr-2 flex-shrink-0 mt-0.5 text-rose-600" />
+                  <span>{errorMessage}</span>
+                </div>
+              )}
+
               <div>
-                <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wider">Scanned QR Code Data</label>
+                <div className="flex justify-between items-center mb-1">
+                  <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wider">Scanned QR Code Data</label>
+                  <button
+                    type="button"
+                    onClick={() => setQrCodeData(shipment.qr_code_data || '')}
+                    className="text-2xs font-extrabold text-blue-600 hover:underline hover:text-blue-800"
+                  >
+                    [Simulate Barcode Scan]
+                  </button>
+                </div>
                 <input
                   type="text"
                   required
+                  placeholder="Enter or scan package QR Code..."
                   value={qrCodeData}
                   onChange={(e) => setQrCodeData(e.target.value)}
-                  className="mt-1 block w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500 font-mono"
+                  className="block w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500 font-mono"
                 />
               </div>
 
               <div>
-                <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wider">Proof of Delivery URL (Signature image)</label>
-                <input
-                  type="text"
-                  required
-                  value={podUrl}
-                  onChange={(e) => setPodUrl(e.target.value)}
-                  className="mt-1 block w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500"
-                />
+                <div className="flex justify-between items-center mb-1">
+                  <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wider">Proof of Delivery Signature</label>
+                  <button
+                    type="button"
+                    onClick={clearCanvas}
+                    className="text-2xs font-extrabold text-slate-500 hover:underline hover:text-slate-800"
+                  >
+                    Clear
+                  </button>
+                </div>
+                <div className="border border-slate-200 rounded-lg overflow-hidden bg-slate-50">
+                  <canvas
+                    ref={canvasRef}
+                    width={350}
+                    height={120}
+                    onMouseDown={startDrawing}
+                    onMouseMove={draw}
+                    onMouseUp={stopDrawing}
+                    onMouseLeave={stopDrawing}
+                    className="w-full h-[120px] cursor-crosshair block bg-white"
+                  />
+                </div>
+                <p className="text-[10px] text-slate-400 mt-1">Use your cursor to sign inside the canvas box.</p>
               </div>
 
               <div className="pt-4 border-t border-slate-100 flex justify-end space-x-3">
@@ -363,13 +484,9 @@ const ShipmentDetails: React.FC = () => {
                 </button>
                 <button
                   type="button"
-                  onClick={() => handleUpdateStatus('delivered', {
-                    proof_of_delivery_url: podUrl,
-                    qr_code_data: qrCodeData,
-                    actual_delivery: new Date().toISOString()
-                  })}
-                  disabled={statusLoading}
-                  className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-sm font-medium transition-colors inline-flex items-center"
+                  onClick={submitDelivery}
+                  disabled={statusLoading || !qrCodeData}
+                  className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-sm font-medium transition-colors inline-flex items-center disabled:opacity-50"
                 >
                   {statusLoading && <Loader2 className="animate-spin -ml-1 mr-1.5 h-4 w-4" />}
                   Confirm Delivery

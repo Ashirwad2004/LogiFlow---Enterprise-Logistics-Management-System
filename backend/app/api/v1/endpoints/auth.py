@@ -8,6 +8,7 @@ from app.models.user import User
 from app.models.role import Role
 from app.schemas.token import Token
 from app.schemas.user import User as UserSchema
+from app.schemas.company import CompanyUpdate, CompanyResponse
 from app.core.security import (
     verify_password,
     get_password_hash,
@@ -31,6 +32,57 @@ class UserRegister(BaseModel):
 class RefreshTokenRequest(BaseModel):
     refresh_token: str
 
+def assign_default_permissions_to_role(db: Session, role: Role):
+    from app.models.permission import Permission
+    
+    role_permissions_map = {
+        "Super Admin": [
+            "shipment:create", "shipment:read", "shipment:update", "shipment:delete",
+            "driver:assign", "vehicle:assign", "warehouse:manage", "warehouse:read",
+            "tracking:update", "billing:manage", "billing:read", "reports:view",
+            "company:manage", "user:manage"
+        ],
+        "Company Admin": [
+            "shipment:create", "shipment:read", "shipment:update", "shipment:delete",
+            "driver:assign", "vehicle:assign", "warehouse:manage", "warehouse:read",
+            "tracking:update", "billing:manage", "billing:read", "reports:view",
+            "company:manage", "user:manage"
+        ],
+        "Dispatcher": [
+            "shipment:create", "shipment:read", "shipment:update", "driver:assign",
+            "warehouse:read", "reports:view"
+        ],
+        "Warehouse Mgr": [
+            "warehouse:manage", "warehouse:read", "shipment:read"
+        ],
+        "Driver": [
+            "shipment:read", "tracking:update"
+        ],
+        "Accountant": [
+            "billing:manage", "billing:read", "reports:view"
+        ],
+        "Customer": [
+            "shipment:create", "shipment:read"
+        ]
+    }
+    
+    perms_to_assign = role_permissions_map.get(role.name, [])
+    for p_name in perms_to_assign:
+        perm = db.query(Permission).filter(Permission.name == p_name).first()
+        if not perm:
+            desc = p_name.replace(":", " ").capitalize()
+            perm = Permission(name=p_name, description=desc)
+            db.add(perm)
+            db.commit()
+            db.refresh(perm)
+        
+        if perm not in role.permissions:
+            role.permissions.append(perm)
+            
+    db.add(role)
+    db.commit()
+    db.refresh(role)
+
 @router.post("/register", status_code=status.HTTP_201_CREATED)
 def register_company_and_admin(data: UserRegister, db: Session = Depends(get_db)):
     if db.query(User).filter(User.email == data.admin_email).first():
@@ -47,6 +99,8 @@ def register_company_and_admin(data: UserRegister, db: Session = Depends(get_db)
     db.add(role)
     db.commit()
     db.refresh(role)
+    
+    assign_default_permissions_to_role(db, role)
     
     # Create User
     user = User(
@@ -134,10 +188,76 @@ def get_current_user_profile(current_user: User = Depends(get_current_user), db:
         "company": {
             "id": company.id if company else None,
             "name": company.name if company else None,
-            "gst_number": company.gst_number if company else None
+            "legal_name": company.legal_name if company else None,
+            "gst_number": company.gst_number if company else None,
+            "support_email": company.support_email if company else None,
+            "invoice_prefix": company.invoice_prefix if company else None,
+            "tax_rate": float(company.tax_rate) if company and company.tax_rate else 18.00,
+            "address": company.address if company else None
         },
-        "permissions": [] # Implement fetching permissions if role_permissions table is added later
+        "permissions": [p.name for p in role.permissions] if role else []
     }
+
+@router.put("/company", response_model=CompanyResponse)
+def update_company(
+    data: CompanyUpdate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """
+    Update company profile configurations (restricted to Company Admin / Super Admin).
+    """
+    role = db.query(Role).filter(Role.id == current_user.role_id).first()
+    if not role or role.name not in ["Company Admin", "Super Admin"]:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only administrators can modify company configurations."
+        )
+        
+    company = db.query(Company).filter(Company.id == current_user.company_id).first()
+    if not company:
+        raise HTTPException(status_code=404, detail="Company not found.")
+        
+    old_values = {
+        "name": company.name,
+        "legal_name": company.legal_name,
+        "gst_number": company.gst_number,
+        "support_email": company.support_email,
+        "invoice_prefix": company.invoice_prefix,
+        "tax_rate": float(company.tax_rate) if company.tax_rate else 18.00,
+        "address": company.address
+    }
+    
+    update_data = data.model_dump(exclude_unset=True)
+    for field, value in update_data.items():
+        setattr(company, field, value)
+        
+    db.add(company)
+    db.commit()
+    db.refresh(company)
+    
+    new_values = {
+        "name": company.name,
+        "legal_name": company.legal_name,
+        "gst_number": company.gst_number,
+        "support_email": company.support_email,
+        "invoice_prefix": company.invoice_prefix,
+        "tax_rate": float(company.tax_rate) if company.tax_rate else 18.00,
+        "address": company.address
+    }
+    
+    from app.services.audit import log_action
+    log_action(
+        db=db,
+        user_id=current_user.id,
+        action="update_company",
+        table_name="companies",
+        record_id=company.id,
+        old_values=old_values,
+        new_values=new_values
+    )
+    
+    return company
 
 class ForgotPasswordRequest(BaseModel):
     email: EmailStr
@@ -211,6 +331,7 @@ def create_company_user(data: UserCreateRequest, db: Session = Depends(get_db), 
         db.add(role)
         db.commit()
         db.refresh(role)
+        assign_default_permissions_to_role(db, role)
         
     user = User(
         company_id=current_user.company_id,

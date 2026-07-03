@@ -10,3 +10,8 @@ class Role(Base):
     name = Column(String(100), nullable=False)
     description = Column(String)
     created_at = Column(TIMESTAMP, server_default=text("now()"))
+
+    from sqlalchemy.orm import relationship
+    from app.models.permission import role_permissions
+    permissions = relationship("Permission", secondary=role_permissions, back_populates="roles")
+

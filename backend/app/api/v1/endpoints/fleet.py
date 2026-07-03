@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 from typing import List
-from app.api.deps import get_db, get_current_user
+from app.api.deps import get_db, get_current_user, check_role
 from app.models.user import User
 from app.models.vehicle import Vehicle
 from app.models.driver import Driver
@@ -11,7 +11,7 @@ router = APIRouter()
 
 # Vehicles Endpoints
 @router.post("/vehicles", response_model=VehicleResponse, status_code=status.HTTP_201_CREATED)
-def create_vehicle(vehicle_in: VehicleCreate, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+def create_vehicle(vehicle_in: VehicleCreate, db: Session = Depends(get_db), current_user: User = Depends(check_role([]))):
     # Check if registration number already exists
     if db.query(Vehicle).filter(Vehicle.registration_number == vehicle_in.registration_number).first():
         raise HTTPException(status_code=400, detail="Vehicle with this registration number already exists.")
@@ -26,12 +26,12 @@ def create_vehicle(vehicle_in: VehicleCreate, db: Session = Depends(get_db), cur
     return vehicle
 
 @router.get("/vehicles", response_model=List[VehicleResponse])
-def get_vehicles(db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+def get_vehicles(db: Session = Depends(get_db), current_user: User = Depends(check_role(["Dispatcher"]))):
     return db.query(Vehicle).filter(Vehicle.company_id == current_user.company_id).all()
 
 # Drivers Endpoints
 @router.post("/drivers", response_model=DriverResponse, status_code=status.HTTP_201_CREATED)
-def create_driver(driver_in: DriverCreate, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+def create_driver(driver_in: DriverCreate, db: Session = Depends(get_db), current_user: User = Depends(check_role([]))):
     if db.query(Driver).filter(Driver.license_number == driver_in.license_number).first():
         raise HTTPException(status_code=400, detail="Driver with this license number already exists.")
     
@@ -50,10 +50,11 @@ def create_driver(driver_in: DriverCreate, db: Session = Depends(get_db), curren
     return driver
 
 @router.get("/drivers", response_model=List[DriverResponse])
-def get_drivers(db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+def get_drivers(db: Session = Depends(get_db), current_user: User = Depends(check_role(["Dispatcher"]))):
     results = db.query(Driver, User.full_name).join(User).filter(User.company_id == current_user.company_id).all()
     drivers = []
     for driver, full_name in results:
         driver.full_name = full_name
         drivers.append(driver)
     return drivers
+

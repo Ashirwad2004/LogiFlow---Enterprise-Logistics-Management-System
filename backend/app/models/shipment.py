@@ -28,12 +28,15 @@ class ShipmentItem(Base):
     
     id = Column(UUID(as_uuid=True), primary_key=True, server_default=text("gen_random_uuid()"))
     shipment_id = Column(UUID(as_uuid=True), ForeignKey("shipments.id", ondelete="CASCADE"), nullable=False)
+    rack_id = Column(UUID(as_uuid=True), ForeignKey("warehouse_racks.id", ondelete="SET NULL"), nullable=True)
     description = Column(String(255), nullable=False)
     quantity = Column(Integer, nullable=False)
     weight_kg = Column(Numeric(10, 2))
     dimensions = Column(String(100))
 
     shipment = relationship("Shipment", back_populates="items")
+    rack = relationship("WarehouseRack", back_populates="items")
+
 
 class ShipmentTracking(Base):
     __tablename__ = "shipment_tracking"

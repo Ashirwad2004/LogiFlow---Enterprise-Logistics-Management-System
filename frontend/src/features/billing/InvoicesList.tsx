@@ -23,6 +23,8 @@ const InvoicesList: React.FC = () => {
   const [invoiceShipment, setInvoiceShipment] = useState<any>(null);
   const [loadingDetails, setLoadingDetails] = useState(false);
 
+  const [company, setCompany] = useState<any>(null);
+
   const fetchInvoices = async () => {
     try {
       const response = await api.get('/billing/invoices');
@@ -34,8 +36,18 @@ const InvoicesList: React.FC = () => {
     }
   };
 
+  const fetchProfileAndCompany = async () => {
+    try {
+      const response = await api.get('/auth/me');
+      setCompany(response.data.company);
+    } catch (error) {
+      console.error('Failed to fetch user company details', error);
+    }
+  };
+
   useEffect(() => {
     fetchInvoices();
+    fetchProfileAndCompany();
   }, []);
 
   const handlePay = async (invoiceId: string, amount: number) => {
@@ -216,88 +228,95 @@ const InvoicesList: React.FC = () => {
                 <Loader2 className="w-6 h-6 animate-spin text-blue-600" />
                 <span>Generating invoice document...</span>
               </div>
-            ) : (
-              <div className="p-8 space-y-8 font-sans">
-                {/* Header branding */}
-                <div className="flex justify-between items-start">
-                  <div>
-                    <h2 className="text-2xl font-black text-blue-600 tracking-tight">LogiFlow</h2>
-                    <p className="text-xs text-slate-500 mt-1">Enterprise Logistics Solutions</p>
-                  </div>
-                  <div className="text-right">
-                    <span className={`px-2.5 py-1 text-xs font-bold uppercase rounded border ${getStatusColor(selectedInvoice.status)}`}>
-                      {selectedInvoice.status}
-                    </span>
-                    <p className="text-xs text-slate-500 mt-2">Issued on: {new Date(selectedInvoice.issued_at).toLocaleDateString()}</p>
-                  </div>
-                </div>
-
-                {/* Addresses */}
-                <div className="grid grid-cols-2 gap-8 border-t border-slate-100 pt-6">
-                  <div>
-                    <h4 className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-2">Billed By</h4>
-                    <p className="text-sm font-bold text-slate-800">LogiFlow Enterprise</p>
-                    <p className="text-xs text-slate-600 mt-1">100 Logistics Tech Way</p>
-                    <p className="text-xs text-slate-600">Mumbai, Maharashtra - 400001</p>
-                    <p className="text-xs text-slate-600 mt-1 font-semibold">GSTIN: 27AAAAA1111A1Z1</p>
-                  </div>
-                  <div>
-                    <h4 className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-2">Billed To</h4>
-                    <p className="text-sm font-bold text-slate-800">{invoiceShipment?.customer_name || 'Acme Customer'}</p>
-                    <p className="text-xs text-slate-600 mt-1">{invoiceShipment?.pickup_address || 'Pickup Warehouse'}</p>
-                    <p className="text-xs text-slate-600">Shipment Ref: #{selectedInvoice.shipment_id.substring(0,8)}</p>
-                  </div>
-                </div>
-
-                {/* Details list */}
-                <div className="border-t border-slate-100 pt-6">
-                  <h4 className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-4">Shipment Details</h4>
-                  <table className="min-w-full text-sm">
-                    <thead>
-                      <tr className="border-b border-slate-100 text-slate-500 pb-2">
-                        <th className="text-left font-semibold pb-2">Milestone / Description</th>
-                        <th className="text-right font-semibold pb-2">Tracking #</th>
-                        <th className="text-right font-semibold pb-2">Amount</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      <tr className="border-b border-slate-100">
-                        <td className="py-4">
-                          <p className="font-semibold text-slate-800">Standard Freight Cargo Delivery</p>
-                          <p className="text-xs text-slate-500 mt-0.5">Route: {invoiceShipment?.pickup_address} &rarr; {invoiceShipment?.delivery_address}</p>
-                        </td>
-                        <td className="py-4 text-right font-mono text-xs">{invoiceShipment?.tracking_number}</td>
-                        <td className="py-4 text-right font-medium">${(selectedInvoice.total_amount / 1.18).toFixed(2)}</td>
-                      </tr>
-                    </tbody>
-                  </table>
-                </div>
-
-                {/* Calculations summary */}
-                <div className="flex justify-end pt-4">
-                  <div className="w-64 space-y-2.5 text-sm">
-                    <div className="flex justify-between text-slate-600">
-                      <span>Subtotal:</span>
-                      <span>${(selectedInvoice.total_amount / 1.18).toFixed(2)}</span>
+            ) : (() => {
+              const taxRateFloat = company?.tax_rate ? parseFloat(company.tax_rate) : 18.0;
+              const subtotal = selectedInvoice.total_amount / (1 + (taxRateFloat / 100));
+              const taxAmount = selectedInvoice.total_amount - subtotal;
+              
+              return (
+                <div className="p-8 space-y-8 font-sans">
+                  {/* Header branding */}
+                  <div className="flex justify-between items-start">
+                    <div>
+                      <h2 className="text-2xl font-black text-blue-600 tracking-tight">
+                        {company?.name || 'LogiFlow'}
+                      </h2>
+                      <p className="text-xs text-slate-500 mt-1">Enterprise Logistics Solutions</p>
                     </div>
-                    <div className="flex justify-between text-slate-600">
-                      <span>GST (18%):</span>
-                      <span>${(selectedInvoice.total_amount - (selectedInvoice.total_amount / 1.18)).toFixed(2)}</span>
-                    </div>
-                    <div className="flex justify-between text-base font-bold text-slate-900 border-t border-slate-100 pt-2.5">
-                      <span>Total Amount:</span>
-                      <span>${selectedInvoice.total_amount.toFixed(2)}</span>
+                    <div className="text-right">
+                      <span className={`px-2.5 py-1 text-xs font-bold uppercase rounded border ${getStatusColor(selectedInvoice.status)}`}>
+                        {selectedInvoice.status}
+                      </span>
+                      <p className="text-xs text-slate-500 mt-2">Issued on: {new Date(selectedInvoice.issued_at).toLocaleDateString()}</p>
                     </div>
                   </div>
-                </div>
 
-                {/* Receipt footer */}
-                <div className="border-t border-slate-100 pt-6 text-center text-xs text-slate-400">
-                  <p>Thank you for choosing LogiFlow. For any questions, contact accounting@logiflow.com.</p>
-                  <p className="mt-1 font-semibold text-slate-500">This is a computer-generated tax invoice receipt.</p>
+                  {/* Addresses */}
+                  <div className="grid grid-cols-2 gap-8 border-t border-slate-100 pt-6">
+                    <div>
+                      <h4 className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-2">Billed By</h4>
+                      <p className="text-sm font-bold text-slate-800">{company?.legal_name || company?.name || 'LogiFlow Enterprise'}</p>
+                      <p className="text-xs text-slate-600 mt-1 whitespace-pre-line">{company?.address || '100 Logistics Tech Way\nMumbai, Maharashtra - 400001'}</p>
+                      {company?.gst_number && <p className="text-xs text-slate-600 mt-1 font-semibold">GSTIN: {company.gst_number}</p>}
+                    </div>
+                    <div>
+                      <h4 className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-2">Billed To</h4>
+                      <p className="text-sm font-bold text-slate-800">{invoiceShipment?.customer_name || 'Acme Customer'}</p>
+                      <p className="text-xs text-slate-600 mt-1">{invoiceShipment?.pickup_address || 'Pickup Warehouse'}</p>
+                      <p className="text-xs text-slate-600">Shipment Ref: #{selectedInvoice.shipment_id.substring(0,8)}</p>
+                    </div>
+                  </div>
+
+                  {/* Details list */}
+                  <div className="border-t border-slate-100 pt-6">
+                    <h4 className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-4">Shipment Details</h4>
+                    <table className="min-w-full text-sm">
+                      <thead>
+                        <tr className="border-b border-slate-100 text-slate-500 pb-2">
+                          <th className="text-left font-semibold pb-2">Milestone / Description</th>
+                          <th className="text-right font-semibold pb-2">Tracking #</th>
+                          <th className="text-right font-semibold pb-2">Amount</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        <tr className="border-b border-slate-100">
+                          <td className="py-4">
+                            <p className="font-semibold text-slate-800">Standard Freight Cargo Delivery</p>
+                            <p className="text-xs text-slate-500 mt-0.5">Route: {invoiceShipment?.pickup_address} &rarr; {invoiceShipment?.delivery_address}</p>
+                          </td>
+                          <td className="py-4 text-right font-mono text-xs">{invoiceShipment?.tracking_number}</td>
+                          <td className="py-4 text-right font-medium">${subtotal.toFixed(2)}</td>
+                        </tr>
+                      </tbody>
+                    </table>
+                  </div>
+
+                  {/* Calculations summary */}
+                  <div className="flex justify-end pt-4">
+                    <div className="w-64 space-y-2.5 text-sm">
+                      <div className="flex justify-between text-slate-600">
+                        <span>Subtotal:</span>
+                        <span>${subtotal.toFixed(2)}</span>
+                      </div>
+                      <div className="flex justify-between text-slate-600">
+                        <span>GST ({taxRateFloat}%):</span>
+                        <span>${taxAmount.toFixed(2)}</span>
+                      </div>
+                      <div className="flex justify-between text-base font-bold text-slate-900 border-t border-slate-100 pt-2.5">
+                        <span>Total Amount:</span>
+                        <span>${selectedInvoice.total_amount.toFixed(2)}</span>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Receipt footer */}
+                  <div className="border-t border-slate-100 pt-6 text-center text-xs text-slate-400">
+                    <p>Thank you for choosing {company?.name || 'LogiFlow'}. For any questions, contact {company?.support_email || 'support@logiflow.com'}.</p>
+                    <p className="mt-1 font-semibold text-slate-500">This is a computer-generated tax invoice receipt.</p>
+                  </div>
                 </div>
-              </div>
-            )}
+              );
+            })()}
           </div>
         </div>
       )}

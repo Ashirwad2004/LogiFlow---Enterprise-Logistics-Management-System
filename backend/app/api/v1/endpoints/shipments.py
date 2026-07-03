@@ -1,7 +1,7 @@
 from typing import Any
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
-from app.api.deps import get_db, get_current_user
+from app.api.deps import get_db, get_current_user, check_role
 from app.models.user import User
 from app.models.shipment import Shipment, ShipmentItem
 from app.schemas.shipment import ShipmentCreate, ShipmentListResponse, Shipment as ShipmentSchema, ShipmentUpdate
@@ -22,10 +22,12 @@ def create_shipment(
     *,
     db: Session = Depends(get_db),
     shipment_in: ShipmentCreate,
-    current_user: User = Depends(get_current_user)
+    current_user: User = Depends(check_role(["Dispatcher"]))
 ) -> Any:
-    # Create Shipment
+    import random
     tracking_num = generate_tracking_number()
+    qr_data = f"LF-QR-{tracking_num}-{random.randint(1000, 9999)}"
+    
     db_shipment = Shipment(
         company_id=current_user.company_id,
         tracking_number=tracking_num,
@@ -36,6 +38,7 @@ def create_shipment(
         pickup_address=shipment_in.pickup_address,
         delivery_address=shipment_in.delivery_address,
         estimated_delivery=shipment_in.estimated_delivery,
+        qr_code_data=qr_data
     )
     db.add(db_shipment)
     db.commit()
@@ -64,6 +67,15 @@ def create_shipment(
         new_values={"tracking_number": db_shipment.tracking_number, "status": db_shipment.status}
     )
     
+    from app.services.notifications import trigger_notification
+    trigger_notification(
+        db=db,
+        company_id=current_user.company_id,
+        trigger_event="shipment_created",
+        title="New Shipment Booked",
+        message=f"Shipment {db_shipment.tracking_number} has been created and is pending dispatch."
+    )
+    
     return {
         "id": db_shipment.id,
         "tracking_number": db_shipment.tracking_number,
@@ -78,7 +90,7 @@ def read_shipments(
     size: int = 20,
     status: str = Query(None),
     search: str = Query(None),
-    current_user: User = Depends(get_current_user)
+    current_user: User = Depends(check_role(["Dispatcher", "Driver", "Warehouse Mgr", "Accountant", "Customer"]))
 ) -> Any:
     from app.models.customer import Customer
     from app.models.driver import Driver
@@ -126,7 +138,7 @@ def read_shipments(
 def read_shipment(
     shipment_id: str,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)
+    current_user: User = Depends(check_role(["Dispatcher", "Driver", "Warehouse Mgr", "Accountant", "Customer"]))
 ) -> Any:
     from app.models.customer import Customer
     from app.models.driver import Driver
@@ -159,7 +171,7 @@ def update_shipment(
     shipment_id: str,
     shipment_in: ShipmentUpdate,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)
+    current_user: User = Depends(check_role(["Dispatcher", "Driver"]))
 ) -> Any:
     """
     Update shipment details (e.g. driver assignment, status, actual delivery, POD).
@@ -181,11 +193,82 @@ def update_shipment(
     
     # Update fields
     update_data = shipment_in.model_dump(exclude_unset=True)
+    
+    # Check if driver assignment is being changed
+    new_driver_id = update_data.get("driver_id")
+    if new_driver_id and str(new_driver_id) != str(shipment.driver_id):
+        from app.models.driver import Driver
+        from app.models.vehicle import Vehicle
+        
+        driver = db.query(Driver).filter(Driver.id == new_driver_id).first()
+        if not driver:
+            raise HTTPException(status_code=400, detail="The assigned driver does not exist.")
+            
+        # 1. Verify driver has an assigned vehicle
+        if not driver.assigned_vehicle_id:
+            raise HTTPException(
+                status_code=400,
+                detail="The driver cannot be assigned because they have no vehicle allocated."
+            )
+            
+        # 2. Verify driver is available
+        if driver.status != "available":
+            raise HTTPException(
+                status_code=400,
+                detail=f"The driver is currently {driver.status} and cannot take a new shipment."
+            )
+            
+        vehicle = db.query(Vehicle).filter(Vehicle.id == driver.assigned_vehicle_id).first()
+        if not vehicle:
+            raise HTTPException(status_code=400, detail="The driver's assigned vehicle does not exist.")
+            
+        # 3. Verify vehicle is active
+        if vehicle.status != "active":
+            raise HTTPException(
+                status_code=400,
+                detail=f"The vehicle is currently {vehicle.status} and cannot be used."
+            )
+            
+        # 4. Verify vehicle capacity vs total items weight
+        total_shipment_weight = sum(float(item.weight_kg or 0.0) * int(item.quantity or 1) for item in shipment.items)
+        if total_shipment_weight > float(vehicle.capacity_kg):
+            raise HTTPException(
+                status_code=400,
+                detail=f"Shipment weight ({total_shipment_weight} kg) exceeds vehicle capacity ({vehicle.capacity_kg} kg)."
+            )
+            
+    # Verification check when transitioning to delivered
+    new_status = update_data.get("status")
+    if new_status == "delivered" and old_status != "delivered":
+        scanned_qr = update_data.get("qr_code_data")
+        if not scanned_qr or scanned_qr != shipment.qr_code_data:
+            raise HTTPException(
+                status_code=400,
+                detail="Package verification failed. QR code data does not match the shipment record."
+            )
+            
     for field, value in update_data.items():
         setattr(shipment, field, value)
         
+    # Update driver status dynamically based on shipment status transitions
+    if shipment.driver_id:
+        from app.models.driver import Driver
+        driver = db.query(Driver).filter(Driver.id == shipment.driver_id).first()
+        if driver:
+            if shipment.status == "in_transit":
+                driver.status = "on_trip"
+            elif shipment.status == "delivered":
+                driver.status = "available"
+            db.add(driver)
+            
     # If transitioning to delivered, generate invoice
     if shipment.status == "delivered" and old_status != "delivered":
+        # Load company to get custom prefix and tax rate
+        from app.models.company import Company
+        company = db.query(Company).filter(Company.id == shipment.company_id).first()
+        prefix = company.invoice_prefix if company and company.invoice_prefix else "INV"
+        tax_pct = float(company.tax_rate) / 100.0 if company and company.tax_rate is not None else 0.18
+        
         # Calculate invoice amount
         base_rate = 50.00
         item_charge = 0.00
@@ -195,7 +278,7 @@ def update_shipment(
             item_charge += quantity * weight * 0.50 # $0.50 per kg
             
         subtotal = base_rate + item_charge
-        gst_amount = subtotal * 0.18 # 18% GST
+        gst_amount = subtotal * tax_pct
         total_amount = subtotal + gst_amount
         
         # Check if invoice already exists
@@ -203,7 +286,7 @@ def update_shipment(
         existing_invoice = db.query(Invoice).filter(Invoice.shipment_id == shipment.id).first()
         if not existing_invoice:
             import random
-            inv_number = f"INV-{datetime.now().year}-{random.randint(100000, 999999)}"
+            inv_number = f"{prefix}-{datetime.now().year}-{random.randint(100000, 999999)}"
             db_invoice = Invoice(
                 shipment_id=shipment.id,
                 invoice_number=inv_number,
@@ -218,6 +301,25 @@ def update_shipment(
     db.add(shipment)
     db.commit()
     db.refresh(shipment)
+    
+    # Notifications trigger transitions
+    from app.services.notifications import trigger_notification
+    if shipment.status == "in_transit" and old_status != "in_transit":
+        trigger_notification(
+            db=db,
+            company_id=shipment.company_id,
+            trigger_event="shipment_in_transit",
+            title="Shipment In Transit",
+            message=f"Shipment {shipment.tracking_number} is now in transit."
+        )
+    elif shipment.status == "delivered" and old_status != "delivered":
+        trigger_notification(
+            db=db,
+            company_id=shipment.company_id,
+            trigger_event="shipment_delivered",
+            title="Shipment Delivered",
+            message=f"Shipment {shipment.tracking_number} has been successfully delivered."
+        )
     
     new_values = {
         "status": shipment.status,
