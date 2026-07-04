@@ -12,5 +12,6 @@ from app.models.warehouse import Warehouse, WarehouseSection, WarehouseRack
 from app.models.shipment import Shipment, ShipmentItem, ShipmentTracking
 from app.models.invoice import Invoice
 from app.models.payment import Payment
+from app.models.eway_bill import EWayBill
 from app.models.audit_log import AuditLog
 from app.models.notification import Notification

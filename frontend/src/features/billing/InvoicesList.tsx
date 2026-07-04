@@ -14,11 +14,28 @@ import {
   FileText, 
   Clock,
   BarChart3,
-  ChevronRight,
-  CheckCircle2,
   AlertCircle,
-  Coins
+  Coins,
+  ShieldCheck,
+  Truck,
+  Ban
 } from 'lucide-react';
+
+interface EWayBill {
+  id: string;
+  invoice_id: string;
+  ewb_number: string | null;
+  status: string;
+  consignor_gstin: string;
+  consignee_gstin: string;
+  hsn_code: string;
+  transporter_id: string | null;
+  vehicle_number: string | null;
+  distance_km: number;
+  valid_until: string | null;
+  qr_code_data: string | null;
+  generated_at: string | null;
+}
 
 interface Invoice {
   id: string;
@@ -28,6 +45,7 @@ interface Invoice {
   status: string;
   issued_at: string;
   shipment_id: string;
+  eway_bill?: EWayBill | null;
 }
 
 interface UnbilledShipment {
@@ -59,6 +77,33 @@ const InvoicesList: React.FC = () => {
   const [paymentReference, setPaymentReference] = useState('');
   const [recordingPayment, setRecordingPayment] = useState(false);
   const [paymentError, setPaymentError] = useState('');
+
+  // e-Way Bill generation modal states
+  const [showEWayModal, setShowEWayModal] = useState(false);
+  const [selectedEWayInvoice, setSelectedEWayInvoice] = useState<Invoice | null>(null);
+  const [consignorGSTIN, setConsignorGSTIN] = useState('');
+  const [consigneeGSTIN, setConsigneeGSTIN] = useState('');
+  const [hsnCode, setHsnCode] = useState('');
+  const [transporterId, setTransporterId] = useState('');
+  const [vehicleNumber, setVehicleNumber] = useState('');
+  const [distanceKm, setDistanceKm] = useState('150');
+  const [generatingEWay, setGeneratingEWay] = useState(false);
+  const [ewayError, setEwayError] = useState('');
+
+  // Part B Vehicle Update states
+  const [showVehicleModal, setShowVehicleModal] = useState(false);
+  const [updatingEWay, setUpdatingEWay] = useState<EWayBill | null>(null);
+  const [newVehicleNumber, setNewVehicleNumber] = useState('');
+  const [recordingVehicleUpdate, setRecordingVehicleUpdate] = useState(false);
+  const [vehicleUpdateError, setVehicleUpdateError] = useState('');
+
+  // e-Way Bill Cancel states
+  const [showCancelModal, setShowCancelModal] = useState(false);
+  const [cancellingEWay, setCancellingEWay] = useState<EWayBill | null>(null);
+  const [cancelReasonCode, setCancelReasonCode] = useState('1');
+  const [cancelRemarks, setCancelRemarks] = useState('');
+  const [recordingCancellation, setRecordingCancellation] = useState(false);
+  const [cancellationError, setCancellationError] = useState('');
   
   // Invoice detail modal state (PDF view)
   const [selectedInvoice, setSelectedInvoice] = useState<Invoice | null>(null);
@@ -191,7 +236,6 @@ const InvoicesList: React.FC = () => {
       setPaymentInvoice(null);
       setPaymentAmount('');
       
-      // Re-fetch list
       await fetchInvoices();
       await fetchUnbilledShipments();
       if (activeTab === 'reports') {
@@ -202,6 +246,172 @@ const InvoicesList: React.FC = () => {
       setPaymentError(error.response?.data?.detail || 'Failed to record payment transaction.');
     } finally {
       setRecordingPayment(false);
+    }
+  };
+
+  // e-Way Bill functions
+  const openEWayModal = async (invoice: Invoice) => {
+    setSelectedEWayInvoice(invoice);
+    setConsignorGSTIN(company?.gst_number || '27AAAAA1111A1Z1');
+    setConsigneeGSTIN('');
+    setHsnCode('9965'); // default logistics transport code
+    setTransporterId('');
+    setDistanceKm('150');
+    setEwayError('');
+
+    // Pre-fill vehicle if shipment exists
+    setVehicleNumber('');
+    try {
+      const response = await api.get(`/shipments/${invoice.shipment_id}`);
+      if (response.data?.driver?.vehicle?.registration_number) {
+        setVehicleNumber(response.data.driver.vehicle.registration_number);
+      }
+    } catch (error) {
+      console.error('Failed to prefill vehicle number', error);
+    }
+    setShowEWayModal(true);
+  };
+
+  const handleGenerateEWayBill = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!selectedEWayInvoice) return;
+    setGeneratingEWay(true);
+    setEwayError('');
+
+    // Frontend validations
+    const gstinRegex = /^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z]{1}[1-9A-Z]{1}Z[0-9A-Z]{1}$/i;
+    if (!gstinRegex.test(consignorGSTIN)) {
+      setEwayError('Invalid Consignor GSTIN format. Must be a valid 15-character Indian GSTIN.');
+      setGeneratingEWay(false);
+      return;
+    }
+    if (!gstinRegex.test(consigneeGSTIN)) {
+      setEwayError('Invalid Consignee GSTIN format. Must be a valid 15-character Indian GSTIN.');
+      setGeneratingEWay(false);
+      return;
+    }
+
+    const hsnRegex = /^\d{4}(\d{2}|\d{4})?$/;
+    if (!hsnRegex.test(hsnCode)) {
+      setEwayError('HSN Code must be exactly 4, 6, or 8 digits.');
+      setGeneratingEWay(false);
+      return;
+    }
+
+    if (vehicleNumber) {
+      const vehRegex = /^[A-Z]{2}[ -]?[0-9]{1,2}[ -]?[A-Z]{1,3}[ -]?[0-9]{4}$/i;
+      if (!vehRegex.test(vehicleNumber)) {
+        setEwayError('Invalid Vehicle registration number format (e.g. MH-12-PQ-9999).');
+        setGeneratingEWay(false);
+        return;
+      }
+    } else if (selectedEWayInvoice.total_amount > 50000) {
+      setEwayError('Part B Alert: Vehicle Number is mandatory for generating an e-Way Bill above ₹50,000.');
+      setGeneratingEWay(false);
+      return;
+    }
+
+    try {
+      await api.post(`/billing/invoices/${selectedEWayInvoice.id}/eway-bill`, {
+        consignor_gstin: consignorGSTIN,
+        consignee_gstin: consigneeGSTIN,
+        hsn_code: hsnCode,
+        transporter_id: transporterId || null,
+        vehicle_number: vehicleNumber || null,
+        distance_km: parseInt(distanceKm)
+      });
+      
+      setShowEWayModal(false);
+      setSelectedEWayInvoice(null);
+      await fetchInvoices();
+    } catch (err: any) {
+      console.error('E-Way Bill generation failed', err);
+      if (err.response?.status === 422 && err.response?.data?.detail) {
+        const details = err.response.data.detail;
+        const msg = Array.isArray(details) ? details.map((d: any) => `${d.loc.join('.')}: ${d.msg}`).join(', ') : JSON.stringify(details);
+        setEwayError(msg);
+      } else {
+        setEwayError(err.response?.data?.detail || 'Failed to generate GST E-Way Bill.');
+      }
+    } finally {
+      setGeneratingEWay(false);
+    }
+  };
+
+  const openVehicleUpdateModal = (eway: EWayBill) => {
+    setUpdatingEWay(eway);
+    setNewVehicleNumber('');
+    setVehicleUpdateError('');
+    setShowVehicleModal(true);
+  };
+
+  const handleUpdateVehicle = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!updatingEWay) return;
+    setRecordingVehicleUpdate(true);
+    setVehicleUpdateError('');
+
+    const vehRegex = /^[A-Z]{2}[ -]?[0-9]{1,2}[ -]?[A-Z]{1,3}[ -]?[0-9]{4}$/i;
+    if (!vehRegex.test(newVehicleNumber)) {
+      setVehicleUpdateError('Invalid Vehicle registration number format (e.g. MH-12-PQ-9999).');
+      setRecordingVehicleUpdate(false);
+      return;
+    }
+
+    try {
+      await api.post(`/billing/eway-bill/${updatingEWay.id}/update-vehicle`, {
+        vehicle_number: newVehicleNumber
+      });
+      setShowVehicleModal(false);
+      setUpdatingEWay(null);
+      await fetchInvoices();
+    } catch (err: any) {
+      console.error('Vehicle update failed', err);
+      if (err.response?.status === 422 && err.response?.data?.detail) {
+        const details = err.response.data.detail;
+        const msg = Array.isArray(details) ? details.map((d: any) => d.msg).join(', ') : JSON.stringify(details);
+        setVehicleUpdateError(msg);
+      } else {
+        setVehicleUpdateError(err.response?.data?.detail || 'Failed to update Part B vehicle details.');
+      }
+    } finally {
+      setRecordingVehicleUpdate(false);
+    }
+  };
+
+  const openCancelModal = (eway: EWayBill) => {
+    setCancellingEWay(eway);
+    setCancelReasonCode('1');
+    setCancelRemarks('');
+    setCancellationError('');
+    setShowCancelModal(true);
+  };
+
+  const handleCancelEWay = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!cancellingEWay) return;
+    setRecordingCancellation(true);
+    setCancellationError('');
+
+    try {
+      await api.post(`/billing/eway-bill/${cancellingEWay.id}/cancel`, {
+        cancel_reason_code: parseInt(cancelReasonCode),
+        cancel_remarks: cancelRemarks || null
+      });
+      setShowCancelModal(false);
+      setCancellingEWay(null);
+      await fetchInvoices();
+    } catch (err: any) {
+      console.error('Cancellation failed', err);
+      if (err.response?.status === 422 && err.response?.data?.detail) {
+        const details = err.response.data.detail;
+        const msg = Array.isArray(details) ? details.map((d: any) => d.msg).join(', ') : JSON.stringify(details);
+        setCancellationError(msg);
+      } else {
+        setCancellationError(err.response?.data?.detail || 'Failed to cancel e-Way Bill.');
+      }
+    } finally {
+      setRecordingCancellation(false);
     }
   };
 
@@ -258,6 +468,15 @@ const InvoicesList: React.FC = () => {
     }
   };
 
+  const getEWayStatusColor = (status: string) => {
+    switch (status.toLowerCase()) {
+      case 'generated': return 'bg-emerald-50 text-emerald-700 border-emerald-200';
+      case 'active_part_a': return 'bg-blue-50 text-blue-750 border-blue-200';
+      case 'cancelled': return 'bg-rose-50 text-rose-700 border-rose-200';
+      default: return 'bg-slate-55 text-slate-650 border-slate-200';
+    }
+  };
+
   const getMethodLabel = (method: string) => {
     switch (method) {
       case 'credit_card': return 'Credit Card';
@@ -278,7 +497,7 @@ const InvoicesList: React.FC = () => {
         </div>
 
         {/* Tab switcher */}
-        <div className="bg-slate-105 p-1 rounded-lg border border-slate-200 flex">
+        <div className="bg-slate-100 p-1 rounded-lg border border-slate-200 flex">
           <button
             onClick={() => setActiveTab('ledger')}
             className={`px-3.5 py-1.5 text-xs font-bold rounded-lg transition-colors cursor-pointer flex items-center ${activeTab === 'ledger' ? 'bg-white text-blue-600 shadow-sm border border-slate-200' : 'text-slate-500 hover:text-slate-800 border border-transparent'}`}
@@ -303,7 +522,7 @@ const InvoicesList: React.FC = () => {
           {unbilledShipments.length > 0 && (
             <div className="bg-amber-50/50 border border-amber-250 rounded-xl p-5 shadow-2xs space-y-4">
               <div className="flex items-center space-x-2">
-                <Coins className="w-5 h-5 text-amber-600 animate-pulse animate-bounce" />
+                <Coins className="w-5 h-5 text-amber-600 animate-bounce" />
                 <h3 className="text-sm font-bold text-slate-800 uppercase tracking-wider">Unbilled Shipments ({unbilledShipments.length})</h3>
               </div>
               <p className="text-xs text-slate-600 -mt-2">The following shipments have been successfully delivered but have not been invoiced yet.</p>
@@ -356,6 +575,7 @@ const InvoicesList: React.FC = () => {
                     <th className="px-6 py-3.5 text-left">Invoice #</th>
                     <th className="px-6 py-3.5 text-left">Billed Amount</th>
                     <th className="px-6 py-3.5 text-left">Outstanding Due</th>
+                    <th className="px-6 py-3.5 text-left">GST e-Way Bill</th>
                     <th className="px-6 py-3.5 text-left">Date Issued</th>
                     <th className="px-6 py-3.5 text-left">Status</th>
                     <th className="relative px-6 py-3.5"><span className="sr-only">Actions</span></th>
@@ -364,7 +584,7 @@ const InvoicesList: React.FC = () => {
                 <tbody className="bg-white divide-y divide-slate-200 text-slate-700">
                   {loading ? (
                     <tr>
-                      <td colSpan={6} className="px-6 py-10 text-center text-slate-500">
+                      <td colSpan={7} className="px-6 py-10 text-center text-slate-500">
                         <div className="flex justify-center items-center space-x-2">
                           <Loader2 className="w-5 h-5 border-2 border-blue-600 border-t-transparent rounded-full animate-spin" />
                           <span>Loading invoices...</span>
@@ -373,7 +593,7 @@ const InvoicesList: React.FC = () => {
                     </tr>
                   ) : invoices.length === 0 ? (
                     <tr>
-                      <td colSpan={6} className="px-6 py-12 text-center text-slate-500">
+                      <td colSpan={7} className="px-6 py-12 text-center text-slate-500">
                         <div className="flex flex-col items-center py-6">
                           <Receipt className="w-12 h-12 text-slate-300 mb-3" />
                           <p className="font-semibold text-slate-850">No invoices generated yet.</p>
@@ -382,56 +602,107 @@ const InvoicesList: React.FC = () => {
                       </td>
                     </tr>
                   ) : (
-                    invoices.map(invoice => (
-                      <tr key={invoice.id} className="hover:bg-slate-50/50 transition-colors">
-                        <td className="px-6 py-4 whitespace-nowrap">
-                          <div className="flex items-center font-bold text-slate-900">
-                            <Receipt className="mr-2 h-4 w-4 text-slate-400" />
-                            {invoice.invoice_number}
-                          </div>
-                          <div className="text-xs text-slate-450 mt-1 font-mono">Shipment: {invoice.shipment_id.substring(0,8)}...</div>
-                        </td>
-                        <td className="px-6 py-4 whitespace-nowrap">
-                          <div className="font-bold text-slate-850">{currencySymbol}{invoice.total_amount.toFixed(2)}</div>
-                        </td>
-                        <td className="px-6 py-4 whitespace-nowrap">
-                          <div className={`font-extrabold ${invoice.outstanding_balance > 0 ? 'text-slate-800' : 'text-slate-400'}`}>
-                            {currencySymbol}{invoice.outstanding_balance.toFixed(2)}
-                          </div>
-                        </td>
-                        <td className="px-6 py-4 whitespace-nowrap text-slate-500 font-medium">
-                          {new Date(invoice.issued_at).toLocaleDateString()}
-                        </td>
-                        <td className="px-6 py-4 whitespace-nowrap">
-                          <span className={`px-2.5 py-1 inline-flex text-xs leading-5 font-semibold rounded-full border ${getStatusColor(invoice.status)}`}>
-                            {invoice.status.replace('_', ' ').toUpperCase()}
-                          </span>
-                        </td>
-                        <td className="px-6 py-4 whitespace-nowrap text-right font-medium space-x-4">
-                          {invoice.outstanding_balance > 0 ? (
-                            <button 
-                              onClick={() => openPaymentModal(invoice)}
-                              className="text-blue-650 hover:text-blue-900 inline-flex items-center cursor-pointer font-bold"
-                            >
-                              <CreditCard className="w-4 h-4 mr-1" />
-                              Pay
-                            </button>
-                          ) : (
-                            <span className="text-emerald-600 inline-flex items-center text-xs font-semibold">
-                              <Check className="w-4 h-4 mr-0.5" /> Fully Paid
-                            </span>
-                          )}
+                    invoices.map(invoice => {
+                      const isEWayBillRequired = company?.currency === 'INR' && invoice.total_amount > 50000;
+                      return (
+                        <tr key={invoice.id} className="hover:bg-slate-50/50 transition-colors">
+                          <td className="px-6 py-4 whitespace-nowrap">
+                            <div className="flex items-center font-bold text-slate-900">
+                              <Receipt className="mr-2 h-4 w-4 text-slate-400" />
+                              {invoice.invoice_number}
+                            </div>
+                            <div className="text-xs text-slate-450 mt-1 font-mono">Shipment: {invoice.shipment_id.substring(0,8)}...</div>
+                          </td>
+                          <td className="px-6 py-4 whitespace-nowrap">
+                            <div className="font-bold text-slate-850">{currencySymbol}{invoice.total_amount.toFixed(2)}</div>
+                          </td>
+                          <td className="px-6 py-4 whitespace-nowrap">
+                            <div className={`font-extrabold ${invoice.outstanding_balance > 0 ? 'text-slate-800' : 'text-slate-400'}`}>
+                              {currencySymbol}{invoice.outstanding_balance.toFixed(2)}
+                            </div>
+                          </td>
                           
-                          <button 
-                            onClick={() => handleViewDetails(invoice)}
-                            className="text-slate-650 hover:text-slate-900 inline-flex items-center cursor-pointer"
-                          >
-                            <Download className="w-4 h-4 mr-1" />
-                            Details
-                          </button>
-                        </td>
-                      </tr>
-                    ))
+                          {/* e-Way Bill column */}
+                          <td className="px-6 py-4 whitespace-nowrap">
+                            {invoice.eway_bill ? (
+                              <div className="flex items-center space-x-2">
+                                <span className={`px-2 py-0.5 text-xs font-semibold rounded-md border ${getEWayStatusColor(invoice.eway_bill.status)}`}>
+                                  {invoice.eway_bill.status === 'generated' ? `EWB: ${invoice.eway_bill.ewb_number}` : invoice.eway_bill.status.toUpperCase().replace('_', ' ')}
+                                </span>
+                                {invoice.eway_bill.status === 'generated' && (
+                                  <div className="relative group inline-block text-left">
+                                    <button className="text-xs text-slate-400 hover:text-slate-700 font-extrabold cursor-pointer px-1 border border-slate-200 rounded">
+                                      ⚙️
+                                    </button>
+                                    <div className="absolute left-0 mt-1 w-36 origin-top-left rounded-md bg-white shadow-lg ring-1 ring-black ring-opacity-5 z-30 hidden group-hover:block hover:block">
+                                      <div className="py-1">
+                                        <button
+                                          onClick={() => openVehicleUpdateModal(invoice.eway_bill!)}
+                                          className="text-slate-700 block w-full text-left px-4 py-2 text-xs hover:bg-slate-50 font-bold"
+                                        >
+                                          Update Vehicle
+                                        </button>
+                                        <button
+                                          onClick={() => openCancelModal(invoice.eway_bill!)}
+                                          className="text-rose-600 block w-full text-left px-4 py-2 text-xs hover:bg-rose-50 font-bold"
+                                        >
+                                          Cancel Bill
+                                        </button>
+                                      </div>
+                                    </div>
+                                  </div>
+                                )}
+                              </div>
+                            ) : (
+                              <div>
+                                {company?.currency === 'INR' ? (
+                                  <button
+                                    onClick={() => openEWayModal(invoice)}
+                                    className={`px-2 py-1 text-2xs font-extrabold rounded-lg cursor-pointer transition-all border ${isEWayBillRequired ? 'bg-amber-500 hover:bg-amber-600 text-white border-amber-650 animate-pulse' : 'bg-slate-100 hover:bg-slate-200 text-slate-650 border-slate-300'}`}
+                                  >
+                                    {isEWayBillRequired ? 'E-Way Bill Required' : 'Generate E-Way Bill'}
+                                  </button>
+                                ) : (
+                                  <span className="text-xs text-slate-400 italic font-medium">N/A (Non-INR)</span>
+                                )}
+                              </div>
+                            )}
+                          </td>
+
+                          <td className="px-6 py-4 whitespace-nowrap text-slate-500 font-medium">
+                            {new Date(invoice.issued_at).toLocaleDateString()}
+                          </td>
+                          <td className="px-6 py-4 whitespace-nowrap">
+                            <span className={`px-2.5 py-1 inline-flex text-xs leading-5 font-semibold rounded-full border ${getStatusColor(invoice.status)}`}>
+                              {invoice.status.replace('_', ' ').toUpperCase()}
+                            </span>
+                          </td>
+                          <td className="px-6 py-4 whitespace-nowrap text-right font-medium space-x-4">
+                            {invoice.outstanding_balance > 0 ? (
+                              <button 
+                                onClick={() => openPaymentModal(invoice)}
+                                className="text-blue-650 hover:text-blue-900 inline-flex items-center cursor-pointer font-bold"
+                              >
+                                <CreditCard className="w-4 h-4 mr-1" />
+                                Pay
+                              </button>
+                            ) : (
+                              <span className="text-emerald-600 inline-flex items-center text-xs font-semibold">
+                                <Check className="w-4 h-4 mr-0.5" /> Fully Paid
+                              </span>
+                            )}
+                            
+                            <button 
+                              onClick={() => handleViewDetails(invoice)}
+                              className="text-slate-650 hover:text-slate-900 inline-flex items-center cursor-pointer"
+                            >
+                              <Download className="w-4 h-4 mr-1" />
+                              Details
+                            </button>
+                          </td>
+                        </tr>
+                      );
+                    })
                   )}
                 </tbody>
               </table>
@@ -637,8 +908,8 @@ const InvoicesList: React.FC = () => {
 
               <div className="bg-slate-50 p-3 rounded-lg border border-slate-200 text-xs space-y-1">
                 <p className="text-slate-500">Invoice Number: <span className="font-mono font-bold text-slate-850">{paymentInvoice.invoice_number}</span></p>
-                <p className="text-slate-505">Total Billable: <span className="font-bold text-slate-850">{currencySymbol}{paymentInvoice.total_amount.toFixed(2)}</span></p>
-                <p className="text-slate-505">Outstanding Balance: <span className="font-bold text-blue-600">{currencySymbol}{paymentInvoice.outstanding_balance.toFixed(2)}</span></p>
+                <p className="text-slate-550">Total Billable: <span className="font-bold text-slate-850">{currencySymbol}{paymentInvoice.total_amount.toFixed(2)}</span></p>
+                <p className="text-slate-550">Outstanding Balance: <span className="font-bold text-blue-600">{currencySymbol}{paymentInvoice.outstanding_balance.toFixed(2)}</span></p>
               </div>
 
               <div>
@@ -684,7 +955,7 @@ const InvoicesList: React.FC = () => {
                 <button
                   type="button"
                   onClick={() => { setShowPaymentModal(false); setPaymentInvoice(null); }}
-                  className="px-4 py-2 border border-slate-350 hover:bg-slate-100 rounded-lg text-xs font-bold text-slate-650 cursor-pointer"
+                  className="px-4 py-2 border border-slate-350 hover:bg-slate-100 rounded-lg text-xs font-bold text-slate-655 cursor-pointer"
                 >
                   Cancel
                 </button>
@@ -695,6 +966,281 @@ const InvoicesList: React.FC = () => {
                 >
                   {recordingPayment && <Loader2 className="animate-spin -ml-1 mr-1.5 h-3.5 w-3.5" />}
                   Submit Payment
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Generate e-Way Bill Modal */}
+      {showEWayModal && selectedEWayInvoice && (
+        <div className="fixed inset-0 bg-slate-900/50 backdrop-blur-xs flex items-center justify-center p-4 z-50 animate-fade-in print:hidden">
+          <div className="bg-white rounded-xl shadow-2xl border border-slate-200 w-full max-w-md overflow-hidden animate-scale-in">
+            <div className="px-6 py-4 bg-slate-50 border-b border-slate-100 flex justify-between items-center">
+              <h3 className="text-base font-bold text-slate-850 flex items-center">
+                <Truck className="w-5 h-5 mr-2 text-amber-500" /> Generate GST E-Way Bill (NIC)
+              </h3>
+              <button 
+                type="button" 
+                onClick={() => { setShowEWayModal(false); setSelectedEWayInvoice(null); }}
+                className="p-1 border border-transparent rounded-lg hover:bg-slate-200 text-slate-400 hover:text-slate-650 cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <form onSubmit={handleGenerateEWayBill} className="p-6 space-y-4">
+              {ewayError && (
+                <div className="bg-rose-50 border border-rose-250 text-rose-800 text-xs rounded-lg p-3 flex items-start space-x-2">
+                  <AlertCircle className="w-4 h-4 mt-0.5 flex-shrink-0" />
+                  <span>{ewayError}</span>
+                </div>
+              )}
+
+              {selectedEWayInvoice.total_amount > 50000 && (
+                <div className="bg-amber-50 border border-amber-250 text-amber-800 text-2xs rounded-lg p-3 flex items-start space-x-2">
+                  <AlertCircle className="w-4 h-4 mt-0.5 flex-shrink-0" />
+                  <div>
+                    <span className="font-bold">CA Compliance Alert:</span> Consignment value is ₹{selectedEWayInvoice.total_amount.toFixed(2)}, which exceeds the regulatory limit of ₹50,000. Generating an e-Way Bill is mandatory under CGST Rule 138.
+                  </div>
+                </div>
+              )}
+
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wider">Consignor GSTIN</label>
+                  <input
+                    type="text"
+                    required
+                    maxLength={15}
+                    value={consignorGSTIN}
+                    onChange={(e) => setConsignorGSTIN(e.target.value.toUpperCase())}
+                    className="mt-1 block w-full px-3 py-2 border border-slate-300 rounded-lg text-xs bg-white focus:outline-none focus:ring-blue-500"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wider">Consignee GSTIN</label>
+                  <input
+                    type="text"
+                    required
+                    maxLength={15}
+                    placeholder="e.g. 27BCDEF5555F1Z2"
+                    value={consigneeGSTIN}
+                    onChange={(e) => setConsigneeGSTIN(e.target.value.toUpperCase())}
+                    className="mt-1 block w-full px-3 py-2 border border-slate-300 rounded-lg text-xs bg-white focus:outline-none focus:ring-blue-500"
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-3 gap-4">
+                <div>
+                  <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wider">HSN Code</label>
+                  <input
+                    type="text"
+                    required
+                    maxLength={8}
+                    value={hsnCode}
+                    onChange={(e) => setHsnCode(e.target.value)}
+                    className="mt-1 block w-full px-3 py-2 border border-slate-300 rounded-lg text-xs bg-white focus:outline-none focus:ring-blue-500"
+                  />
+                </div>
+                <div className="col-span-2">
+                  <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wider">Vehicle Number (Part B)</label>
+                  <input
+                    type="text"
+                    required
+                    placeholder="e.g. MH-12-PQ-1234"
+                    value={vehicleNumber}
+                    onChange={(e) => setVehicleNumber(e.target.value.toUpperCase())}
+                    className="mt-1 block w-full px-3 py-2 border border-slate-300 rounded-lg text-xs bg-white focus:outline-none focus:ring-blue-500"
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wider">Transporter ID</label>
+                  <input
+                    type="text"
+                    placeholder="e.g. TRANS-8877"
+                    value={transporterId}
+                    onChange={(e) => setTransporterId(e.target.value)}
+                    className="mt-1 block w-full px-3 py-2 border border-slate-300 rounded-lg text-xs bg-white focus:outline-none focus:ring-blue-500"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wider">Est Distance (KM)</label>
+                  <input
+                    type="number"
+                    required
+                    value={distanceKm}
+                    onChange={(e) => setDistanceKm(e.target.value)}
+                    className="mt-1 block w-full px-3 py-2 border border-slate-300 rounded-lg text-xs bg-white focus:outline-none focus:ring-blue-500"
+                  />
+                </div>
+              </div>
+
+              <div className="pt-4 border-t border-slate-100 flex justify-end space-x-3">
+                <button
+                  type="button"
+                  onClick={() => { setShowEWayModal(false); setSelectedEWayInvoice(null); }}
+                  className="px-4 py-2 border border-slate-350 hover:bg-slate-100 rounded-lg text-xs font-bold text-slate-655 cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={generatingEWay}
+                  className="px-4 py-2 bg-amber-500 hover:bg-amber-650 text-white rounded-lg text-xs font-bold transition-colors inline-flex items-center disabled:opacity-50 cursor-pointer"
+                >
+                  {generatingEWay && <Loader2 className="animate-spin -ml-1 mr-1.5 h-3.5 w-3.5" />}
+                  Generate NIC Bill
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Part B Vehicle Update Modal */}
+      {showVehicleModal && updatingEWay && (
+        <div className="fixed inset-0 bg-slate-900/50 backdrop-blur-xs flex items-center justify-center p-4 z-50 animate-fade-in print:hidden">
+          <div className="bg-white rounded-xl shadow-2xl border border-slate-200 w-full max-w-md overflow-hidden animate-scale-in">
+            <div className="px-6 py-4 bg-slate-50 border-b border-slate-100 flex justify-between items-center">
+              <h3 className="text-base font-bold text-slate-850 flex items-center">
+                <Truck className="w-5 h-5 mr-2 text-blue-650" /> Update Part B (Vehicle transshipment)
+              </h3>
+              <button 
+                type="button" 
+                onClick={() => { setShowVehicleModal(false); setUpdatingEWay(null); }}
+                className="p-1 border border-transparent rounded-lg hover:bg-slate-200 text-slate-400 hover:text-slate-655 cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <form onSubmit={handleUpdateVehicle} className="p-6 space-y-4">
+              {vehicleUpdateError && (
+                <div className="bg-rose-50 border border-rose-250 text-rose-800 text-xs rounded-lg p-3 flex items-start space-x-2">
+                  <AlertCircle className="w-4 h-4 mt-0.5 flex-shrink-0" />
+                  <span>{vehicleUpdateError}</span>
+                </div>
+              )}
+
+              <div className="bg-slate-50 p-3 rounded-lg border border-slate-200 text-xs space-y-1">
+                <p className="text-slate-500">E-Way Bill Number: <span className="font-mono font-bold text-slate-850">{updatingEWay.ewb_number}</span></p>
+                <p className="text-slate-500">Current Vehicle: <span className="font-bold text-slate-850">{updatingEWay.vehicle_number || 'None'}</span></p>
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wider">New Vehicle Number</label>
+                <input
+                  type="text"
+                  required
+                  placeholder="e.g. DL-01-CA-9999"
+                  value={newVehicleNumber}
+                  onChange={(e) => setNewVehicleNumber(e.target.value.toUpperCase())}
+                  className="mt-1 block w-full px-3.5 py-2.5 border border-slate-300 rounded-lg text-sm bg-white focus:outline-none focus:ring-blue-500"
+                />
+                <p className="text-[10px] text-slate-400 mt-1">Updates Part B for transshipment or breakdown breakdown reports.</p>
+              </div>
+
+              <div className="pt-4 border-t border-slate-100 flex justify-end space-x-3">
+                <button
+                  type="button"
+                  onClick={() => { setShowVehicleModal(false); setUpdatingEWay(null); }}
+                  className="px-4 py-2 border border-slate-350 hover:bg-slate-100 rounded-lg text-xs font-bold text-slate-655 cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={recordingVehicleUpdate}
+                  className="px-4 py-2 bg-blue-650 hover:bg-blue-750 text-white rounded-lg text-xs font-bold transition-colors inline-flex items-center disabled:opacity-50 cursor-pointer"
+                >
+                  {recordingVehicleUpdate && <Loader2 className="animate-spin -ml-1 mr-1.5 h-3.5 w-3.5" />}
+                  Update Part B
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Cancel E-Way Bill Modal */}
+      {showCancelModal && cancellingEWay && (
+        <div className="fixed inset-0 bg-slate-900/50 backdrop-blur-xs flex items-center justify-center p-4 z-50 animate-fade-in print:hidden">
+          <div className="bg-white rounded-xl shadow-2xl border border-slate-200 w-full max-w-md overflow-hidden animate-scale-in">
+            <div className="px-6 py-4 bg-slate-50 border-b border-slate-100 flex justify-between items-center">
+              <h3 className="text-base font-bold text-slate-850 flex items-center">
+                <Ban className="w-5 h-5 mr-2 text-rose-600" /> Cancel Government e-Way Bill
+              </h3>
+              <button 
+                type="button" 
+                onClick={() => { setShowCancelModal(false); setCancellingEWay(null); }}
+                className="p-1 border border-transparent rounded-lg hover:bg-slate-200 text-slate-400 hover:text-slate-655 cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <form onSubmit={handleCancelEWay} className="p-6 space-y-4">
+              {cancellationError && (
+                <div className="bg-rose-50 border border-rose-250 text-rose-800 text-xs rounded-lg p-3 flex items-start space-x-2">
+                  <AlertCircle className="w-4 h-4 mt-0.5 flex-shrink-0" />
+                  <span>{cancellationError}</span>
+                </div>
+              )}
+
+              <div className="bg-slate-50 p-3 rounded-lg border border-slate-200 text-xs text-slate-500">
+                <p>E-Way Bill: <span className="font-mono font-bold text-slate-800">{cancellingEWay.ewb_number}</span></p>
+                {cancellingEWay.generated_at && (
+                  <p className="mt-0.5">Generated At: {new Date(cancellingEWay.generated_at).toLocaleString()}</p>
+                )}
+                <p className="text-[10px] text-rose-600 mt-1 font-semibold">CA Policy Note: Cancellation is only permitted within 24 hours of EWB generation.</p>
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wider">Cancellation Reason</label>
+                <select
+                  value={cancelReasonCode}
+                  onChange={(e) => setCancelReasonCode(e.target.value)}
+                  className="mt-1 block w-full px-3.5 py-2.5 border border-slate-300 rounded-lg text-sm bg-white focus:outline-none focus:ring-blue-500"
+                >
+                  <option value="1">Duplicate E-Way Bill</option>
+                  <option value="2">Order Cancelled</option>
+                  <option value="3">Data Entry Mistake</option>
+                  <option value="4">Others</option>
+                </select>
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wider">Cancellation Remarks</label>
+                <textarea
+                  placeholder="Enter remarks..."
+                  rows={2}
+                  value={cancelRemarks}
+                  onChange={(e) => setCancelRemarks(e.target.value)}
+                  className="mt-1 block w-full px-3.5 py-2 border border-slate-300 rounded-lg text-sm bg-white focus:outline-none focus:ring-blue-500"
+                />
+              </div>
+
+              <div className="pt-4 border-t border-slate-100 flex justify-end space-x-3">
+                <button
+                  type="button"
+                  onClick={() => { setShowCancelModal(false); setCancellingEWay(null); }}
+                  className="px-4 py-2 border border-slate-350 hover:bg-slate-100 rounded-lg text-xs font-bold text-slate-655 cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={recordingCancellation}
+                  className="px-4 py-2 bg-rose-600 hover:bg-rose-700 text-white rounded-lg text-xs font-bold transition-colors inline-flex items-center disabled:opacity-50 cursor-pointer"
+                >
+                  {recordingCancellation && <Loader2 className="animate-spin -ml-1 mr-1.5 h-3.5 w-3.5" />}
+                  Confirm Cancellation
                 </button>
               </div>
             </form>
@@ -715,7 +1261,7 @@ const InvoicesList: React.FC = () => {
                 <button
                   type="button"
                   onClick={() => handleDownloadPDF(selectedInvoice.id, selectedInvoice.invoice_number)}
-                  className="px-3.5 py-2 bg-blue-650 hover:bg-blue-750 text-white font-semibold text-sm rounded-lg shadow-sm transition-colors inline-flex items-center cursor-pointer"
+                  className="px-3.5 py-2 bg-blue-600 hover:bg-blue-700 text-white font-semibold text-sm rounded-lg shadow-sm transition-colors inline-flex items-center cursor-pointer"
                 >
                   <Download className="w-4 h-4 mr-1.5" />
                   Download PDF
@@ -731,7 +1277,7 @@ const InvoicesList: React.FC = () => {
                 <button 
                   type="button"
                   onClick={() => setSelectedInvoice(null)}
-                  className="p-2 border border-transparent rounded-lg hover:bg-slate-200 text-slate-500 cursor-pointer"
+                  className="p-2 border border-transparent rounded-lg hover:bg-slate-200 text-slate-505 cursor-pointer"
                 >
                   <X className="w-5 h-5" />
                 </button>
@@ -798,8 +1344,8 @@ const InvoicesList: React.FC = () => {
                         <tr className="border-b border-slate-100">
                           <td className="py-4">
                             <p className="font-semibold text-slate-800 font-mono">Standard Freight Cargo Delivery</p>
-                            <p className="text-xs text-slate-500 mt-1 max-w-sm truncate">Pickup: {invoiceShipment?.pickup_address}</p>
-                            <p className="text-xs text-slate-500 max-w-sm truncate">Delivery: {invoiceShipment?.delivery_address}</p>
+                            <p className="text-xs text-slate-505 mt-1 max-w-sm truncate">Pickup: {invoiceShipment?.pickup_address}</p>
+                            <p className="text-xs text-slate-505 max-w-sm truncate">Delivery: {invoiceShipment?.delivery_address}</p>
                           </td>
                           <td className="py-4 text-right font-mono text-xs">{invoiceShipment?.tracking_number}</td>
                           <td className="py-4 text-right font-bold text-slate-800">{currencySymbol}{subtotal.toFixed(2)}</td>
@@ -867,6 +1413,51 @@ const InvoicesList: React.FC = () => {
                       </div>
                     </div>
                   </div>
+
+                  {/* e-Way Bill NIC Verification details */}
+                  {selectedInvoice.eway_bill && selectedInvoice.eway_bill.status !== 'cancelled' && (
+                    <div className="border-t border-amber-250 bg-amber-50/30 p-4 rounded-xl space-y-3">
+                      <h4 className="text-xs font-bold text-amber-800 uppercase tracking-wider flex items-center">
+                        <ShieldCheck className="w-4 h-4 mr-1 text-amber-600" /> Government e-Way Bill NIC Verification
+                      </h4>
+                      <div className="grid grid-cols-2 gap-4 text-xs">
+                        <div className="space-y-1 text-slate-600">
+                          <p><span className="font-semibold text-slate-500">e-Way Bill No:</span> <span className="font-bold text-slate-800 font-mono">{selectedInvoice.eway_bill.ewb_number}</span></p>
+                          <p><span className="font-semibold text-slate-500">HSN Code:</span> {selectedInvoice.eway_bill.hsn_code}</p>
+                          <p><span className="font-semibold text-slate-500">Consignor GSTIN:</span> {selectedInvoice.eway_bill.consignor_gstin}</p>
+                          <p><span className="font-semibold text-slate-500">Consignee GSTIN:</span> {selectedInvoice.eway_bill.consignee_gstin}</p>
+                        </div>
+                        <div className="space-y-1 text-slate-600">
+                          <p><span className="font-semibold text-slate-500">Vehicle No:</span> <span className="font-bold text-slate-800">{selectedInvoice.eway_bill.vehicle_number || 'N/A'}</span></p>
+                          <p><span className="font-semibold text-slate-500">Distance:</span> {selectedInvoice.eway_bill.distance_km} KM</p>
+                          {selectedInvoice.eway_bill.valid_until && (
+                            <p><span className="font-semibold text-slate-500">Valid Until:</span> {new Date(selectedInvoice.eway_bill.valid_until).toLocaleString()}</p>
+                          )}
+                          <p><span className="font-semibold text-slate-500">Status:</span> <span className="font-bold uppercase text-emerald-600">{selectedInvoice.eway_bill.status}</span></p>
+                        </div>
+                      </div>
+                      <div className="pt-2 border-t border-amber-100 flex items-center space-x-3">
+                        <div className="p-1 bg-white border border-slate-200 rounded">
+                          {selectedInvoice.eway_bill.qr_code_data ? (
+                            <img
+                              src={`https://api.qrserver.com/v1/create-qr-code/?size=80x80&data=${encodeURIComponent(selectedInvoice.eway_bill.qr_code_data)}`}
+                              alt="E-Way Bill QR Code"
+                              className="w-12 h-12 block"
+                            />
+                          ) : (
+                            <div className="w-12 h-12 bg-slate-900 flex items-center justify-center text-white text-[7px] font-bold text-center leading-3 select-none">
+                              NIC<br/>QR CODE
+                            </div>
+                          )}
+                        </div>
+                        <div className="text-[10px] text-slate-450 leading-relaxed max-w-sm">
+                          <p className="font-bold text-slate-500">NIC Secure Hash Verification</p>
+                          <p className="font-mono text-[9px] mt-0.5 truncate">{selectedInvoice.eway_bill.qr_code_data}</p>
+                          <p className="mt-0.5">This document represents a legally compliant tax invoice holding verified electronic e-way transit clearances under the Indian Central Goods and Services Tax Act.</p>
+                        </div>
+                      </div>
+                    </div>
+                  )}
 
                   {/* Receipt footer */}
                   <div className="border-t border-slate-100 pt-6 text-center text-xs text-slate-400">

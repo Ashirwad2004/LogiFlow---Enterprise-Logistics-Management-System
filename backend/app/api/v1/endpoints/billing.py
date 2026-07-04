@@ -9,9 +9,222 @@ from app.models.user import User
 from app.models.invoice import Invoice
 from app.models.payment import Payment
 from app.models.shipment import Shipment
+from app.models.eway_bill import EWayBill
 from app.schemas.billing import InvoiceCreate, InvoiceResponse, PaymentCreate, PaymentResponse
+from app.schemas.eway_bill import EWayBillCreate, EWayBillResponse, EWayBillUpdateVehicle, EWayBillCancel
 
 router = APIRouter()
+
+@router.get("/invoices/{invoice_id}/eway-bill", response_model=EWayBillResponse)
+def get_invoice_eway_bill(
+    invoice_id: UUID,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(check_role(["Accountant", "Company Admin", "Super Admin"]))
+):
+    """
+    Get the GST e-Way Bill associated with a specific invoice.
+    """
+    # Verify invoice belongs to the company
+    invoice = db.query(Invoice).join(Shipment, Invoice.shipment_id == Shipment.id).filter(
+        Invoice.id == invoice_id,
+        Shipment.company_id == current_user.company_id
+    ).first()
+    if not invoice:
+        raise HTTPException(status_code=404, detail="Invoice not found or access denied.")
+        
+    eway_bill = db.query(EWayBill).filter(EWayBill.invoice_id == invoice_id).first()
+    if not eway_bill:
+        raise HTTPException(status_code=404, detail="e-Way Bill not generated for this invoice.")
+    return eway_bill
+
+@router.post("/invoices/{invoice_id}/eway-bill", response_model=EWayBillResponse, status_code=status.HTTP_201_CREATED)
+def generate_eway_bill(
+    invoice_id: UUID,
+    eway_bill_in: EWayBillCreate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(check_role(["Accountant", "Company Admin", "Super Admin"]))
+):
+    """
+    Submit E-Way Bill details to the government portal sandbox and register in database.
+    """
+    # Verify invoice belongs to the company
+    invoice = db.query(Invoice).join(Shipment, Invoice.shipment_id == Shipment.id).filter(
+        Invoice.id == invoice_id,
+        Shipment.company_id == current_user.company_id
+    ).first()
+    if not invoice:
+        raise HTTPException(status_code=404, detail="Invoice not found or access denied.")
+        
+    existing_ewb = db.query(EWayBill).filter(EWayBill.invoice_id == invoice_id).first()
+    if existing_ewb:
+        raise HTTPException(status_code=400, detail="e-Way Bill already exists for this invoice.")
+        
+    from app.services.eway_bill_api import EWayBillGovernmentAPI
+    try:
+        # Handshake with mock Government NIC Portal API
+        govt_response = EWayBillGovernmentAPI.generate_eway_bill(
+            consignor_gstin=eway_bill_in.consignor_gstin,
+            consignee_gstin=eway_bill_in.consignee_gstin,
+            hsn_code=eway_bill_in.hsn_code,
+            invoice_number=invoice.invoice_number,
+            invoice_total=float(invoice.total_amount),
+            distance_km=eway_bill_in.distance_km,
+            vehicle_number=eway_bill_in.vehicle_number
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+        
+    db_ewb = EWayBill(
+        invoice_id=invoice_id,
+        consignor_gstin=eway_bill_in.consignor_gstin,
+        consignee_gstin=eway_bill_in.consignee_gstin,
+        hsn_code=eway_bill_in.hsn_code,
+        transporter_id=eway_bill_in.transporter_id,
+        vehicle_number=eway_bill_in.vehicle_number,
+        distance_km=eway_bill_in.distance_km,
+        ewb_number=govt_response["ewb_number"],
+        status=govt_response["status"],
+        valid_until=govt_response["valid_until"],
+        qr_code_data=govt_response["qr_code_data"],
+        generated_at=govt_response["generated_at"]
+    )
+    db.add(db_ewb)
+    
+    # Audit log generating E-Way Bill
+    from app.services.audit import log_action
+    log_action(
+        db=db,
+        user_id=current_user.id,
+        action="generate_eway_bill",
+        table_name="eway_bills",
+        record_id=db_ewb.id,
+        new_values={
+            "ewb_number": db_ewb.ewb_number,
+            "invoice_number": invoice.invoice_number,
+            "consignee_gstin": db_ewb.consignee_gstin,
+            "vehicle_number": db_ewb.vehicle_number
+        }
+    )
+    
+    # Trigger notification
+    from app.services.notifications import trigger_notification
+    trigger_notification(
+        db=db,
+        company_id=current_user.company_id,
+        trigger_event="eway_bill_generated",
+        title="e-Way Bill Generated Successfully",
+        message=f"Government E-Way Bill #{db_ewb.ewb_number} generated for invoice {invoice.invoice_number}."
+    )
+    
+    db.commit()
+    db.refresh(db_ewb)
+    return db_ewb
+
+@router.post("/eway-bill/{id}/cancel", response_model=EWayBillResponse)
+def cancel_eway_bill(
+    id: UUID,
+    cancel_in: EWayBillCancel,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(check_role(["Accountant", "Company Admin", "Super Admin"]))
+):
+    """
+    Cancel an active e-Way Bill within 24 hours of generation.
+    """
+    eway_bill = db.query(EWayBill).join(Invoice, EWayBill.invoice_id == Invoice.id).join(Shipment, Invoice.shipment_id == Shipment.id).filter(
+        EWayBill.id == id,
+        Shipment.company_id == current_user.company_id
+    ).first()
+    if not eway_bill:
+        raise HTTPException(status_code=404, detail="e-Way Bill not found or access denied.")
+        
+    if eway_bill.status == "cancelled":
+        raise HTTPException(status_code=400, detail="e-Way Bill is already cancelled.")
+        
+    # Check 24 hour limit rule (CA compliance check)
+    if eway_bill.generated_at:
+        hours_elapsed = (datetime.utcnow() - eway_bill.generated_at).total_seconds() / 3600.0
+        if hours_elapsed > 24.0:
+            raise HTTPException(status_code=400, detail="GST Rules restriction: E-Way Bills cannot be cancelled after 24 hours of generation.")
+
+    from app.services.eway_bill_api import EWayBillGovernmentAPI
+    govt_response = EWayBillGovernmentAPI.cancel_eway_bill(
+        ewb_number=eway_bill.ewb_number,
+        cancel_reason_code=cancel_in.cancel_reason_code,
+        remarks=cancel_in.cancel_remarks
+    )
+    
+    eway_bill.status = govt_response["status"]
+    db.add(eway_bill)
+    
+    # Audit log cancellation
+    from app.services.audit import log_action
+    log_action(
+        db=db,
+        user_id=current_user.id,
+        action="cancel_eway_bill",
+        table_name="eway_bills",
+        record_id=eway_bill.id,
+        new_values={
+            "ewb_number": eway_bill.ewb_number,
+            "reason_code": cancel_in.cancel_reason_code,
+            "remarks": cancel_in.cancel_remarks
+        }
+    )
+    
+    db.commit()
+    db.refresh(eway_bill)
+    return eway_bill
+
+@router.post("/eway-bill/{id}/update-vehicle", response_model=EWayBillResponse)
+def update_eway_bill_vehicle(
+    id: UUID,
+    update_in: EWayBillUpdateVehicle,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(check_role(["Accountant", "Company Admin", "Super Admin"]))
+):
+    """
+    Update Part B vehicle details due to vehicle breakdown / transshipment.
+    """
+    eway_bill = db.query(EWayBill).join(Invoice, EWayBill.invoice_id == Invoice.id).join(Shipment, Invoice.shipment_id == Shipment.id).filter(
+        EWayBill.id == id,
+        Shipment.company_id == current_user.company_id
+    ).first()
+    if not eway_bill:
+        raise HTTPException(status_code=404, detail="e-Way Bill not found or access denied.")
+        
+    if eway_bill.status == "cancelled":
+        raise HTTPException(status_code=400, detail="Cannot update vehicle details for a cancelled e-Way Bill.")
+        
+    # Check expiry (if expired, vehicle number update is not allowed on govt portal)
+    if eway_bill.valid_until and datetime.utcnow() > eway_bill.valid_until:
+        raise HTTPException(status_code=400, detail="e-Way Bill validity has expired. Vehicle updates are locked.")
+
+    old_vehicle = eway_bill.vehicle_number
+    from app.services.eway_bill_api import EWayBillGovernmentAPI
+    govt_response = EWayBillGovernmentAPI.update_transshipment_vehicle(
+        ewb_number=eway_bill.ewb_number,
+        vehicle_number=update_in.vehicle_number
+    )
+    
+    eway_bill.vehicle_number = govt_response["vehicle_number"]
+    eway_bill.status = govt_response["status"] # ensure active generated
+    db.add(eway_bill)
+    
+    # Audit log vehicle update
+    from app.services.audit import log_action
+    log_action(
+        db=db,
+        user_id=current_user.id,
+        action="update_vehicle_eway_bill",
+        table_name="eway_bills",
+        record_id=eway_bill.id,
+        old_values={"vehicle_number": old_vehicle},
+        new_values={"vehicle_number": eway_bill.vehicle_number}
+    )
+    
+    db.commit()
+    db.refresh(eway_bill)
+    return eway_bill
 
 @router.get("/invoices/unbilled-shipments")
 def get_unbilled_shipments(
@@ -311,6 +524,10 @@ def get_invoice_pdf(
         spaceAfter=2
     )
     
+    ewb_text = ""
+    if invoice.eway_bill and invoice.eway_bill.status in ["generated", "active_part_a"]:
+        ewb_text = f"<br/><b>E-Way Bill #:</b> {invoice.eway_bill.ewb_number}<br/><b>Veh #:</b> {invoice.eway_bill.vehicle_number or 'N/A'}"
+
     header_data = [
         [
             Paragraph(f"<b>{company.name if company else 'LogiFlow Cargo'}</b>", company_style),
@@ -318,7 +535,7 @@ def get_invoice_pdf(
         ],
         [
             Paragraph(f"{company.address if company else 'Logistics Depot St 15'}<br/>Support: {company.support_email if company else 'support@logiflow.com'}", normal_style),
-            Paragraph(f"<b>Invoice #:</b> {invoice.invoice_number}<br/><b>Status:</b> {invoice.status.upper()}<br/><b>Date:</b> {invoice.issued_at.strftime('%Y-%m-%d') if invoice.issued_at else ''}<br/><b>Due Date:</b> {(invoice.issued_at + timedelta(days=15)).strftime('%Y-%m-%d') if invoice.issued_at else 'Immediate'}", ParagraphStyle('RightText', parent=normal_style, alignment=2))
+            Paragraph(f"<b>Invoice #:</b> {invoice.invoice_number}<br/><b>Status:</b> {invoice.status.upper()}<br/><b>Date:</b> {invoice.issued_at.strftime('%Y-%m-%d') if invoice.issued_at else ''}<br/><b>Due Date:</b> {(invoice.issued_at + timedelta(days=15)).strftime('%Y-%m-%d') if invoice.issued_at else 'Immediate'}{ewb_text}", ParagraphStyle('RightText', parent=normal_style, alignment=2))
         ]
     ]
     header_table = Table(header_data, colWidths=[260, 260])
@@ -412,7 +629,54 @@ def get_invoice_pdf(
         ('TOPPADDING', (0,0), (-1,-1), 4),
     ]))
     story.append(summary_table)
-    story.append(Spacer(1, 40))
+    
+    if invoice.eway_bill and invoice.eway_bill.status in ["generated", "active_part_a"]:
+        story.append(Spacer(1, 15))
+        # Draw a beautiful E-Way Bill verification box
+        from reportlab.graphics.shapes import Drawing
+        from reportlab.graphics.barcode.qr import QrCodeWidget
+        
+        qr_widget = QrCodeWidget(value=invoice.eway_bill.qr_code_data or "")
+        qr_widget.barWidth = 60
+        qr_widget.barHeight = 60
+        qr_drawing = Drawing(60, 60)
+        qr_drawing.add(qr_widget)
+
+        ewb_box_data = [
+            [
+                Paragraph(f"<b>NIC E-WAY BILL VERIFICATION DETAILS (GOVERNMENT OF INDIA)</b>", bold_style),
+                ""
+            ],
+            [
+                Paragraph(
+                    f"<b>E-Way Bill No:</b> {invoice.eway_bill.ewb_number} &nbsp;&nbsp;|&nbsp;&nbsp; "
+                    f"<b>Generated At:</b> {invoice.eway_bill.generated_at.strftime('%Y-%m-%d %H:%M:%S')} &nbsp;&nbsp;|&nbsp;&nbsp; "
+                    f"<b>Valid Until:</b> {invoice.eway_bill.valid_until.strftime('%Y-%m-%d %H:%M:%S')}<br/>"
+                    f"<b>Consignor GSTIN:</b> {invoice.eway_bill.consignor_gstin} &nbsp;&nbsp;|&nbsp;&nbsp; "
+                    f"<b>Consignee GSTIN:</b> {invoice.eway_bill.consignee_gstin}<br/>"
+                    f"<b>Vehicle No:</b> {invoice.eway_bill.vehicle_number or 'N/A'} &nbsp;&nbsp;|&nbsp;&nbsp; "
+                    f"<b>HSN Code:</b> {invoice.eway_bill.hsn_code} &nbsp;&nbsp;|&nbsp;&nbsp; "
+                    f"<b>Distance:</b> {invoice.eway_bill.distance_km} KM<br/>"
+                    f"<b>Verification QR Check:</b> {invoice.eway_bill.qr_code_data}",
+                    normal_style
+                ),
+                qr_drawing
+            ]
+        ]
+        ewb_table = Table(ewb_box_data, colWidths=[450, 70])
+        ewb_table.setStyle(TableStyle([
+            ('SPAN', (0,0), (1,0)),
+            ('BACKGROUND', (0,0), (-1,-1), colors.HexColor("#fffbeb")),
+            ('GRID', (0,0), (-1,-1), 1, colors.HexColor("#f59e0b")),
+            ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),
+            ('BOTTOMPADDING', (0,0), (-1,-1), 8),
+            ('TOPPADDING', (0,0), (-1,-1), 8),
+            ('LEFTPADDING', (0,0), (-1,-1), 10),
+            ('RIGHTPADDING', (0,0), (-1,-1), 10),
+        ]))
+        story.append(ewb_table)
+        
+    story.append(Spacer(1, 20))
     
     footer_style = ParagraphStyle(
         'FooterText',

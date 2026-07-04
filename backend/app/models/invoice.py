@@ -20,6 +20,7 @@ class Invoice(Base):
     issued_at = Column(DateTime(timezone=True), server_default=func.now())
 
     payments = relationship("Payment", back_populates="invoice", cascade="all, delete-orphan")
+    eway_bill = relationship("EWayBill", back_populates="invoice", uselist=False, cascade="all, delete-orphan")
 
     @property
     def outstanding_balance(self) -> float:
