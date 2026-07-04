@@ -1,24 +1,32 @@
-import React from 'react';
+import React, { Suspense, lazy } from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate, Outlet } from 'react-router-dom';
 import { AuthProvider, useAuth } from './core/AuthContext';
-import LoginPage from './features/auth/LoginPage';
-import RegisterPage from './features/auth/RegisterPage';
-import ForgotPasswordPage from './features/auth/ForgotPasswordPage';
-import ResetPasswordPage from './features/auth/ResetPasswordPage';
 import DashboardLayout from './components/layout/DashboardLayout';
-import Dashboard from './features/dashboard/Dashboard';
-import ShipmentList from './features/shipments/ShipmentList';
-import CreateShipment from './features/shipments/CreateShipment';
-import ShipmentDetails from './features/shipments/ShipmentDetails';
-import LiveTracking from './features/tracking/LiveTracking';
-import DriversList from './features/fleet/DriversList';
-import VehiclesList from './features/fleet/VehiclesList';
-import InvoicesList from './features/billing/InvoicesList';
-import WarehousesList from './features/warehouses/WarehousesList';
-import SettingsPage from './features/settings/SettingsPage';
-import PublicTrack from './features/tracking/PublicTrack';
-import AuditLogs from './features/audit/AuditLogs';
-import SaaSManagement from './features/saas/SaaSManagement';
+
+const LoginPage = lazy(() => import('./features/auth/LoginPage'));
+const RegisterPage = lazy(() => import('./features/auth/RegisterPage'));
+const ForgotPasswordPage = lazy(() => import('./features/auth/ForgotPasswordPage'));
+const ResetPasswordPage = lazy(() => import('./features/auth/ResetPasswordPage'));
+const Dashboard = lazy(() => import('./features/dashboard/Dashboard'));
+const ShipmentList = lazy(() => import('./features/shipments/ShipmentList'));
+const CreateShipment = lazy(() => import('./features/shipments/CreateShipment'));
+const ShipmentDetails = lazy(() => import('./features/shipments/ShipmentDetails'));
+const LiveTracking = lazy(() => import('./features/tracking/LiveTracking'));
+const DriversList = lazy(() => import('./features/fleet/DriversList'));
+const VehiclesList = lazy(() => import('./features/fleet/VehiclesList'));
+const InvoicesList = lazy(() => import('./features/billing/InvoicesList'));
+const WarehousesList = lazy(() => import('./features/warehouses/WarehousesList'));
+const SettingsPage = lazy(() => import('./features/settings/SettingsPage'));
+const PublicTrack = lazy(() => import('./features/tracking/PublicTrack'));
+const AuditLogs = lazy(() => import('./features/audit/AuditLogs'));
+const SaaSManagement = lazy(() => import('./features/saas/SaaSManagement'));
+const CustomersList = lazy(() => import('./features/customers/CustomersList'));
+
+const PageLoader = () => (
+  <div className="min-h-screen flex items-center justify-center bg-slate-50">
+    <div className="w-8 h-8 border-4 border-blue-600 border-t-transparent rounded-full animate-spin"></div>
+  </div>
+);
 
 const ProtectedRoute = () => {
   const { user, loading } = useAuth();
@@ -40,31 +48,34 @@ const ProtectedRoute = () => {
 
 const AppRoutes = () => {
   return (
-    <Routes>
-      <Route path="/" element={<PublicTrack />} />
-      <Route path="/track/:trackingNumber" element={<PublicTrack />} />
-      <Route path="/login" element={<LoginPage />} />
-      <Route path="/register" element={<RegisterPage />} />
-      <Route path="/forgot-password" element={<ForgotPasswordPage />} />
-      <Route path="/reset-password" element={<ResetPasswordPage />} />
-      
-      <Route element={<ProtectedRoute />}>
-        <Route element={<DashboardLayout />}>
-          <Route path="/dashboard" element={<Dashboard />} />
-          <Route path="/shipments" element={<ShipmentList />} />
-          <Route path="/shipments/new" element={<CreateShipment />} />
-          <Route path="/shipments/:id" element={<ShipmentDetails />} />
-          <Route path="/tracking" element={<LiveTracking />} />
-          <Route path="/fleet" element={<DriversList />} />
-          <Route path="/vehicles" element={<VehiclesList />} />
-          <Route path="/warehouses" element={<WarehousesList />} />
-          <Route path="/billing" element={<InvoicesList />} />
-          <Route path="/settings" element={<SettingsPage />} />
-          <Route path="/audit-logs" element={<AuditLogs />} />
-          <Route path="/saas" element={<SaaSManagement />} />
+    <Suspense fallback={<PageLoader />}>
+      <Routes>
+        <Route path="/" element={<PublicTrack />} />
+        <Route path="/track/:trackingNumber" element={<PublicTrack />} />
+        <Route path="/login" element={<LoginPage />} />
+        <Route path="/register" element={<RegisterPage />} />
+        <Route path="/forgot-password" element={<ForgotPasswordPage />} />
+        <Route path="/reset-password" element={<ResetPasswordPage />} />
+        
+        <Route element={<ProtectedRoute />}>
+          <Route element={<DashboardLayout />}>
+            <Route path="/dashboard" element={<Dashboard />} />
+            <Route path="/shipments" element={<ShipmentList />} />
+            <Route path="/shipments/new" element={<CreateShipment />} />
+            <Route path="/shipments/:id" element={<ShipmentDetails />} />
+            <Route path="/tracking" element={<LiveTracking />} />
+            <Route path="/fleet" element={<DriversList />} />
+            <Route path="/vehicles" element={<VehiclesList />} />
+            <Route path="/warehouses" element={<WarehousesList />} />
+            <Route path="/billing" element={<InvoicesList />} />
+            <Route path="/customers" element={<CustomersList />} />
+            <Route path="/settings" element={<SettingsPage />} />
+            <Route path="/audit-logs" element={<AuditLogs />} />
+            <Route path="/saas" element={<SaaSManagement />} />
+          </Route>
         </Route>
-      </Route>
-    </Routes>
+      </Routes>
+    </Suspense>
   );
 };
 

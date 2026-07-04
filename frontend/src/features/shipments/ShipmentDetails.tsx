@@ -12,6 +12,7 @@ const ShipmentDetails: React.FC = () => {
   const [drivers, setDrivers] = useState<any[]>([]);
   const [selectedDriverId, setSelectedDriverId] = useState('');
   const [allocationLoading, setAllocationLoading] = useState(false);
+  const [allocationError, setAllocationError] = useState('');
   const [statusLoading, setStatusLoading] = useState(false);
 
   // Delivery simulation state
@@ -96,13 +97,15 @@ const ShipmentDetails: React.FC = () => {
   const handleAssignDriver = async (e: React.FormEvent) => {
     e.preventDefault();
     setAllocationLoading(true);
+    setAllocationError('');
     try {
       const response = await api.put(`/shipments/${id}`, {
         driver_id: selectedDriverId || null
       });
       setShipment(response.data);
-    } catch (error) {
+    } catch (error: any) {
       console.error('Failed to allocate driver', error);
+      setAllocationError(error.response?.data?.detail || 'Failed to assign driver.');
     } finally {
       setAllocationLoading(false);
     }
@@ -294,6 +297,12 @@ const ShipmentDetails: React.FC = () => {
                     Assign
                   </button>
                 </div>
+                {allocationError && (
+                  <p className="text-xs text-rose-600 mt-2 flex items-center">
+                    <AlertCircle className="w-3.5 h-3.5 mr-1" />
+                    {allocationError}
+                  </p>
+                )}
               </form>
             )}
           </div>

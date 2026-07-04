@@ -7,12 +7,12 @@ class Shipment(Base):
     __tablename__ = "shipments"
     
     id = Column(UUID(as_uuid=True), primary_key=True, server_default=text("gen_random_uuid()"))
-    company_id = Column(UUID(as_uuid=True), ForeignKey("companies.id", ondelete="CASCADE"), nullable=False)
-    tracking_number = Column(String(100), unique=True, nullable=False)
-    customer_id = Column(UUID(as_uuid=True), ForeignKey("customers.id", ondelete="RESTRICT"), nullable=False)
-    warehouse_id = Column(UUID(as_uuid=True), ForeignKey("warehouses.id", ondelete="SET NULL"), nullable=True)
-    driver_id = Column(UUID(as_uuid=True), ForeignKey("drivers.id", ondelete="SET NULL"), nullable=True)
-    status = Column(String(50), default="pending")
+    company_id = Column(UUID(as_uuid=True), ForeignKey("companies.id", ondelete="CASCADE"), nullable=False, index=True)
+    tracking_number = Column(String(100), unique=True, nullable=False, index=True)
+    customer_id = Column(UUID(as_uuid=True), ForeignKey("customers.id", ondelete="RESTRICT"), nullable=False, index=True)
+    warehouse_id = Column(UUID(as_uuid=True), ForeignKey("warehouses.id", ondelete="SET NULL"), nullable=True, index=True)
+    driver_id = Column(UUID(as_uuid=True), ForeignKey("drivers.id", ondelete="SET NULL"), nullable=True, index=True)
+    status = Column(String(50), default="pending", index=True)
     pickup_address = Column(String, nullable=False)
     delivery_address = Column(String, nullable=False)
     estimated_delivery = Column(TIMESTAMP)
@@ -27,7 +27,7 @@ class ShipmentItem(Base):
     __tablename__ = "shipment_items"
     
     id = Column(UUID(as_uuid=True), primary_key=True, server_default=text("gen_random_uuid()"))
-    shipment_id = Column(UUID(as_uuid=True), ForeignKey("shipments.id", ondelete="CASCADE"), nullable=False)
+    shipment_id = Column(UUID(as_uuid=True), ForeignKey("shipments.id", ondelete="CASCADE"), nullable=False, index=True)
     rack_id = Column(UUID(as_uuid=True), ForeignKey("warehouse_racks.id", ondelete="SET NULL"), nullable=True)
     description = Column(String(255), nullable=False)
     quantity = Column(Integer, nullable=False)
@@ -43,7 +43,7 @@ class ShipmentTracking(Base):
     __tablename__ = "shipment_tracking"
     
     id = Column(UUID(as_uuid=True), primary_key=True, server_default=text("gen_random_uuid()"))
-    shipment_id = Column(UUID(as_uuid=True), ForeignKey("shipments.id", ondelete="CASCADE"), nullable=False)
+    shipment_id = Column(UUID(as_uuid=True), ForeignKey("shipments.id", ondelete="CASCADE"), nullable=False, index=True)
     latitude = Column(Numeric(10, 8), nullable=False)
     longitude = Column(Numeric(11, 8), nullable=False)
     speed_kmh = Column(Numeric(5, 2))

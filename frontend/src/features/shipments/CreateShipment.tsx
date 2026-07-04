@@ -2,9 +2,12 @@ import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import api from '../../core/api';
 import { ArrowLeft, Loader2, Save } from 'lucide-react';
+import { useAuth } from '../../core/AuthContext';
 
 const CreateShipment: React.FC = () => {
   const navigate = useNavigate();
+  const { user } = useAuth();
+  const isCustomer = user?.role === 'Customer';
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   
@@ -175,27 +178,35 @@ const CreateShipment: React.FC = () => {
               <div className="sm:col-span-2">
                 <div className="flex justify-between items-center mb-1">
                   <label htmlFor="customer_id" className="block text-sm font-medium text-slate-700">Customer</label>
-                  <button
-                    type="button"
-                    onClick={() => setShowQuickAdd(true)}
-                    className="text-xs font-semibold text-blue-600 hover:text-blue-500 transition-colors"
-                  >
-                    + Quick-Add Customer
-                  </button>
+                  {!isCustomer && (
+                    <button
+                      type="button"
+                      onClick={() => setShowQuickAdd(true)}
+                      className="text-xs font-semibold text-blue-600 hover:text-blue-500 transition-colors"
+                    >
+                      + Quick-Add Customer
+                    </button>
+                  )}
                 </div>
                 <div>
                   {loadingCustomers ? (
                     <div className="text-sm text-slate-500 py-2.5 pl-2 border border-dashed border-slate-200 rounded-lg">Loading customers...</div>
                   ) : customers.length === 0 ? (
                     <div className="text-sm text-amber-600 bg-amber-50 border border-amber-200 rounded-lg p-3 flex justify-between items-center">
-                      <span>No customers registered yet. Please add a customer first.</span>
-                      <button
-                        type="button"
-                        onClick={() => setShowQuickAdd(true)}
-                        className="px-3 py-1.5 bg-amber-600 text-white font-semibold rounded-lg text-xs hover:bg-amber-700 transition-colors"
-                      >
-                        Add Customer
-                      </button>
+                      <span>{isCustomer ? 'No customer profile found for your account.' : 'No customers registered yet. Please add a customer first.'}</span>
+                      {!isCustomer && (
+                        <button
+                          type="button"
+                          onClick={() => setShowQuickAdd(true)}
+                          className="px-3 py-1.5 bg-amber-600 text-white font-semibold rounded-lg text-xs hover:bg-amber-700 transition-colors"
+                        >
+                          Add Customer
+                        </button>
+                      )}
+                    </div>
+                  ) : isCustomer ? (
+                    <div className="px-3 py-2.5 border border-slate-300 rounded-lg shadow-sm bg-slate-50 text-slate-700 sm:text-sm">
+                      {customers[0]?.name} ({customers[0]?.email})
                     </div>
                   ) : (
                     <select

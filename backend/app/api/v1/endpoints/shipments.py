@@ -1,6 +1,6 @@
 from typing import Any
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload, joinedload
 from app.api.deps import get_db, get_current_user, check_role
 from app.models.user import User
 from app.models.shipment import Shipment, ShipmentItem
@@ -106,10 +106,19 @@ def read_shipments(
         Driver, Shipment.driver_id == Driver.id
     ).outerjoin(
         User, Driver.user_id == User.id
+    ).options(
+        joinedload(Shipment.items)
     ).filter(
         Shipment.company_id == current_user.company_id
     )
     
+    if current_user.role_name == "Customer":
+        # Find the customer record by email
+        customer_record = db.query(Customer).filter(Customer.email == current_user.email, Customer.company_id == current_user.company_id).first()
+        if not customer_record:
+            return {"items": [], "total": 0, "page": page, "size": size, "pages": 0}
+        query = query.filter(Shipment.customer_id == customer_record.id)
+        
     if status:
         query = query.filter(Shipment.status == status)
     if search:
@@ -144,7 +153,7 @@ def read_shipment(
     from app.models.customer import Customer
     from app.models.driver import Driver
 
-    result = db.query(
+    query = db.query(
         Shipment,
         Customer.name.label("customer_name"),
         User.full_name.label("driver_name")
@@ -154,10 +163,20 @@ def read_shipment(
         Driver, Shipment.driver_id == Driver.id
     ).outerjoin(
         User, Driver.user_id == User.id
+    ).options(
+        joinedload(Shipment.items)
     ).filter(
         Shipment.id == shipment_id,
         Shipment.company_id == current_user.company_id
-    ).first()
+    )
+    
+    if current_user.role_name == "Customer":
+        customer_record = db.query(Customer).filter(Customer.email == current_user.email, Customer.company_id == current_user.company_id).first()
+        if not customer_record:
+            raise HTTPException(status_code=404, detail="Shipment not found")
+        query = query.filter(Shipment.customer_id == customer_record.id)
+        
+    result = query.first()
     
     if not result:
         raise HTTPException(status_code=404, detail="Shipment not found")

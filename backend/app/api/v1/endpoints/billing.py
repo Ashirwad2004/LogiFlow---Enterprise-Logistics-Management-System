@@ -14,13 +14,22 @@ from app.schemas.billing import InvoiceCreate, InvoiceResponse, PaymentCreate, P
 router = APIRouter()
 
 @router.get("/invoices", response_model=List[InvoiceResponse])
-def get_invoices(db: Session = Depends(get_db), current_user: User = Depends(check_role(["Accountant"]))):
+def get_invoices(db: Session = Depends(get_db), current_user: User = Depends(check_role(["Accountant", "Customer", "Company Admin", "Super Admin"]))):
     """
     Retrieve all invoices belonging to shipments of the logged-in user's company tenant.
     """
-    return db.query(Invoice).join(Shipment, Invoice.shipment_id == Shipment.id).filter(
+    query = db.query(Invoice).join(Shipment, Invoice.shipment_id == Shipment.id).filter(
         Shipment.company_id == current_user.company_id
-    ).all()
+    )
+    
+    if current_user.role_name == "Customer":
+        from app.models.customer import Customer
+        customer_record = db.query(Customer).filter(Customer.email == current_user.email, Customer.company_id == current_user.company_id).first()
+        if not customer_record:
+            return []
+        query = query.filter(Shipment.customer_id == customer_record.id)
+        
+    return query.all()
 
 @router.post("/invoices", response_model=InvoiceResponse, status_code=status.HTTP_201_CREATED)
 def create_invoice(invoice_in: InvoiceCreate, db: Session = Depends(get_db), current_user: User = Depends(check_role(["Accountant"]))):
@@ -110,7 +119,8 @@ def get_payments_for_invoice(invoice_id: str, db: Session = Depends(get_db), cur
 @router.get("/invoices/{invoice_id}/pdf")
 def get_invoice_pdf(
     invoice_id: UUID,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
 ):
     """
     Generate and download a beautifully formatted tax invoice PDF.
@@ -128,8 +138,13 @@ def get_invoice_pdf(
         raise HTTPException(status_code=404, detail="Invoice not found.")
         
     shipment = db.query(Shipment).filter(Shipment.id == invoice.shipment_id).first()
-    if not shipment:
+    if not shipment or shipment.company_id != current_user.company_id:
         raise HTTPException(status_code=404, detail="Shipment not found.")
+        
+    if current_user.role_name == "Customer":
+        customer_record = db.query(Customer).filter(Customer.email == current_user.email, Customer.company_id == current_user.company_id).first()
+        if not customer_record or shipment.customer_id != customer_record.id:
+            raise HTTPException(status_code=404, detail="Invoice not found.")
         
     company = db.query(Company).filter(Company.id == shipment.company_id).first()
     customer = db.query(Customer).filter(Customer.id == shipment.customer_id).first()

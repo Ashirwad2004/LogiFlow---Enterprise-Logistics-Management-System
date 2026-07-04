@@ -6,10 +6,10 @@ class Driver(Base):
     __tablename__ = "drivers"
     
     id = Column(UUID(as_uuid=True), primary_key=True, server_default=text("gen_random_uuid()"))
-    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), unique=True, nullable=False)
-    license_number = Column(String(100), unique=True, nullable=False)
+    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), unique=True, nullable=False, index=True)
+    license_number = Column(String(100), unique=True, nullable=False, index=True)
     license_expiry = Column(Date, nullable=False)
     emergency_contact = Column(String(255))
-    status = Column(String(50), default="available")
-    assigned_vehicle_id = Column(UUID(as_uuid=True), ForeignKey("vehicles.id", ondelete="SET NULL"), nullable=True)
+    status = Column(String(50), default="available", index=True)
+    assigned_vehicle_id = Column(UUID(as_uuid=True), ForeignKey("vehicles.id", ondelete="SET NULL"), nullable=True, index=True)
     created_at = Column(TIMESTAMP, server_default=text("now()"))

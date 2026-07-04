@@ -56,6 +56,13 @@ class DriverBase(BaseModel):
 class DriverCreate(DriverBase):
     pass
 
+class DriverUpdate(BaseModel):
+    license_number: Optional[str] = None
+    license_expiry: Optional[date] = None
+    emergency_contact: Optional[str] = None
+    status: Optional[str] = None
+    assigned_vehicle_id: Optional[UUID] = None
+
 class DriverResponse(DriverBase):
     id: UUID
     created_at: datetime

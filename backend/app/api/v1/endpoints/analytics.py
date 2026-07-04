@@ -16,29 +16,52 @@ router = APIRouter()
 def get_dashboard_metrics(db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     company_id = current_user.company_id
     
+    # Check if Customer role
+    is_customer = current_user.role_name == "Customer"
+    customer_id = None
+    if is_customer:
+        from app.models.customer import Customer
+        cust = db.query(Customer).filter(Customer.email == current_user.email, Customer.company_id == company_id).first()
+        customer_id = cust.id if cust else None
+
     # Total Active Shipments
-    active_shipments = db.query(Shipment).filter(
+    q_active_ship = db.query(Shipment).filter(
         Shipment.company_id == company_id,
         Shipment.status.notin_(["delivered", "cancelled"])
-    ).count()
+    )
+    if is_customer and customer_id:
+        q_active_ship = q_active_ship.filter(Shipment.customer_id == customer_id)
+    elif is_customer and not customer_id:
+        q_active_ship = q_active_ship.filter(Shipment.id == None) # Return 0
+    active_shipments = q_active_ship.count()
     
-    # Available Drivers
-    available_drivers = db.query(Driver).join(User).filter(
-        User.company_id == company_id,
-        Driver.status == "available"
-    ).count()
+    # Available Drivers (N/A for customer)
+    available_drivers = 0
+    if not is_customer:
+        available_drivers = db.query(Driver).join(User).filter(
+            User.company_id == company_id,
+            Driver.status == "available"
+        ).count()
     
-    # Vehicles on Duty
-    active_vehicles = db.query(Vehicle).filter(
-        Vehicle.company_id == company_id,
-        Vehicle.status == "active"
-    ).count()
+    # Vehicles on Duty (N/A for customer)
+    active_vehicles = 0
+    if not is_customer:
+        active_vehicles = db.query(Vehicle).filter(
+            Vehicle.company_id == company_id,
+            Vehicle.status == "active"
+        ).count()
     
     # Pending Revenue (Unpaid invoices)
-    pending_revenue = db.query(func.sum(Invoice.total_amount)).join(Shipment).filter(
+    q_pending_rev = db.query(func.sum(Invoice.total_amount)).join(Shipment).filter(
         Shipment.company_id == company_id,
         Invoice.status == "unpaid"
-    ).scalar() or 0.0
+    )
+    if is_customer and customer_id:
+        q_pending_rev = q_pending_rev.filter(Shipment.customer_id == customer_id)
+    elif is_customer and not customer_id:
+        q_pending_rev = q_pending_rev.filter(Shipment.id == None)
+        
+    pending_revenue = q_pending_rev.scalar() or 0.0
     
     # 1. Weekly Shipment Volume (last 7 rolling days)
     today = datetime.date.today()
@@ -48,11 +71,16 @@ def get_dashboard_metrics(db: Session = Depends(get_db), current_user: User = De
         day_str = d.strftime("%a")
         start_time = datetime.datetime.combine(d, datetime.time.min)
         end_time = datetime.datetime.combine(d, datetime.time.max)
-        count = db.query(Shipment).filter(
+        q_count = db.query(Shipment).filter(
             Shipment.company_id == company_id,
             Shipment.created_at >= start_time,
             Shipment.created_at <= end_time
-        ).count()
+        )
+        if is_customer and customer_id:
+            q_count = q_count.filter(Shipment.customer_id == customer_id)
+        elif is_customer and not customer_id:
+            q_count = q_count.filter(Shipment.id == None)
+        count = q_count.count()
         weekly_volume.append({"day": day_str, "count": count})
         
     # 2. Monthly Payouts / Revenue (last 4 rolling months)
@@ -74,11 +102,17 @@ def get_dashboard_metrics(db: Session = Depends(get_db), current_user: User = De
         month_label = m_start.strftime("%B")
         
         # Sum both paid and unpaid invoices to represent generated freight revenue
-        rev = db.query(func.sum(Invoice.total_amount)).join(Shipment).filter(
+        q_rev = db.query(func.sum(Invoice.total_amount)).join(Shipment).filter(
             Shipment.company_id == company_id,
             Invoice.issued_at >= datetime.datetime.combine(m_start, datetime.time.min),
             Invoice.issued_at <= datetime.datetime.combine(m_end, datetime.time.max)
-        ).scalar() or 0.0
+        )
+        if is_customer and customer_id:
+            q_rev = q_rev.filter(Shipment.customer_id == customer_id)
+        elif is_customer and not customer_id:
+            q_rev = q_rev.filter(Shipment.id == None)
+            
+        rev = q_rev.scalar() or 0.0
         
         monthly_revenue.append({
             "month": month_label,

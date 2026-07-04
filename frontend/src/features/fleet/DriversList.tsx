@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
+import { Link } from 'react-router-dom';
 import api from '../../core/api';
-import { Users, Plus, Key, Calendar, Loader2, UserPlus, FileText, Phone, ShieldAlert, CheckCircle2 } from 'lucide-react';
+import { Users, Plus, Key, Calendar, Loader2, UserPlus, FileText, Phone, ShieldAlert, CheckCircle2, Truck } from 'lucide-react';
 
 interface Driver {
   id: string;
@@ -10,6 +11,7 @@ interface Driver {
   license_expiry: string;
   emergency_contact?: string;
   status: string;
+  assigned_vehicle_id?: string | null;
   created_at: string;
 }
 
@@ -22,6 +24,7 @@ interface UserAccount {
 const DriversList: React.FC = () => {
   const [drivers, setDrivers] = useState<Driver[]>([]);
   const [companyUsers, setCompanyUsers] = useState<UserAccount[]>([]);
+  const [vehicles, setVehicles] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
 
   // Modal wizard states
@@ -55,6 +58,9 @@ const DriversList: React.FC = () => {
       const existingDriverUserIds = new Set(drvResponse.data.map((d: Driver) => d.user_id));
       const unassignedUsers = usersResponse.data.filter((u: UserAccount) => !existingDriverUserIds.has(u.id));
       setCompanyUsers(unassignedUsers);
+
+      const vehResponse = await api.get('/fleet/vehicles');
+      setVehicles(vehResponse.data.filter((v: any) => v.status === 'active'));
     } catch (error) {
       console.error('Failed to fetch fleet or user lists', error);
     } finally {
@@ -132,6 +138,18 @@ const DriversList: React.FC = () => {
     }
   };
 
+  const handleAssignVehicle = async (driverId: string, vehicleId: string) => {
+    try {
+      await api.put(`/fleet/drivers/${driverId}`, {
+        assigned_vehicle_id: vehicleId || null
+      });
+      fetchDriversAndUsers();
+    } catch (err) {
+      console.error('Failed to assign vehicle', err);
+      alert('Failed to assign vehicle. Make sure the vehicle is active.');
+    }
+  };
+
   return (
     <div className="space-y-6">
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
@@ -147,6 +165,21 @@ const DriversList: React.FC = () => {
           Add Driver
         </button>
       </div>
+      
+      {/* Fleet Navigation Tabs */}
+      <div className="flex border-b border-slate-200">
+        <button className="border-b-2 border-blue-600 text-blue-600 px-4 py-2.5 text-sm font-semibold flex items-center gap-2">
+          <Users className="w-4 h-4" />
+          Drivers List
+        </button>
+        <Link
+          to="/vehicles"
+          className="border-b-2 border-transparent text-slate-500 hover:text-slate-700 hover:border-slate-350 px-4 py-2.5 text-sm font-medium transition-all flex items-center gap-2"
+        >
+          <Truck className="w-4 h-4" />
+          Vehicles Fleet
+        </Link>
+      </div>
 
       {/* Drivers List Table */}
       <div className="bg-white shadow-sm border border-slate-200 rounded-xl overflow-hidden animate-fade-in">
@@ -157,13 +190,14 @@ const DriversList: React.FC = () => {
                 <th scope="col" className="px-6 py-3.5 text-left text-xs font-semibold text-slate-500 uppercase tracking-wider">Driver Name</th>
                 <th scope="col" className="px-6 py-3.5 text-left text-xs font-semibold text-slate-500 uppercase tracking-wider">License details</th>
                 <th scope="col" className="px-6 py-3.5 text-left text-xs font-semibold text-slate-500 uppercase tracking-wider">License Expiry</th>
+                <th scope="col" className="px-6 py-3.5 text-left text-xs font-semibold text-slate-500 uppercase tracking-wider">Assigned Vehicle</th>
                 <th scope="col" className="px-6 py-3.5 text-left text-xs font-semibold text-slate-500 uppercase tracking-wider">Status</th>
               </tr>
             </thead>
             <tbody className="bg-white divide-y divide-slate-200 text-slate-700">
               {loading ? (
                 <tr>
-                  <td colSpan={4} className="px-6 py-10 text-center text-slate-500">
+                  <td colSpan={5} className="px-6 py-10 text-center text-slate-500">
                     <div className="flex justify-center items-center space-x-2">
                       <Loader2 className="w-5 h-5 border-2 border-blue-600 border-t-transparent rounded-full animate-spin" />
                       <span>Loading fleet staff...</span>
@@ -172,7 +206,7 @@ const DriversList: React.FC = () => {
                 </tr>
               ) : drivers.length === 0 ? (
                 <tr>
-                  <td colSpan={4} className="px-6 py-12 text-center text-slate-500">
+                  <td colSpan={5} className="px-6 py-12 text-center text-slate-500">
                     <div className="flex flex-col items-center py-6">
                       <Users className="w-12 h-12 text-slate-300 mb-3" />
                       <p className="font-semibold text-slate-800">No drivers onboarded.</p>
@@ -203,6 +237,18 @@ const DriversList: React.FC = () => {
                         <Calendar className="w-4 h-4 text-slate-400 mr-1.5" />
                         {new Date(driver.license_expiry).toLocaleDateString()}
                       </div>
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap">
+                      <select 
+                        value={driver.assigned_vehicle_id || ''}
+                        onChange={(e) => handleAssignVehicle(driver.id, e.target.value)}
+                        className="text-xs border border-slate-300 rounded px-2 py-1 bg-white focus:outline-none focus:ring-1 focus:ring-blue-500"
+                      >
+                        <option value="">-- No Vehicle --</option>
+                        {vehicles.map(v => (
+                          <option key={v.id} value={v.id}>{v.registration_number} ({v.type})</option>
+                        ))}
+                      </select>
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap">
                       <span className={`px-2.5 py-1 inline-flex text-xs leading-5 font-semibold rounded-full border ${getStatusColor(driver.status)}`}>

@@ -9,7 +9,7 @@ from uuid import UUID
 
 router = APIRouter()
 
-@router.get("/", response_model=List[NotificationResponse])
+@router.get("", response_model=List[NotificationResponse])
 def get_notifications(
     db: Session = Depends(get_db),
     unread_only: bool = Query(False),

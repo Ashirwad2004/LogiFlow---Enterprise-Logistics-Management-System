@@ -16,10 +16,13 @@ def read_customers(
     """
     Retrieve all customers belonging to the logged-in user's company.
     """
-    customers = db.query(CustomerModel).filter(
+    query = db.query(CustomerModel).filter(
         CustomerModel.company_id == current_user.company_id
-    ).all()
-    return customers
+    )
+    if current_user.role_name == "Customer":
+        query = query.filter(CustomerModel.email == current_user.email)
+        
+    return query.all()
 
 @router.post("/", response_model=Customer, status_code=status.HTTP_201_CREATED)
 def create_customer(

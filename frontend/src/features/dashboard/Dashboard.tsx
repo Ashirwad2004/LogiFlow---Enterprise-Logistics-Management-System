@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Package, Truck, Receipt, Users, TrendingUp, AlertTriangle, Building, Settings, CheckCircle2, ChevronRight } from 'lucide-react';
 import api from '../../core/api';
@@ -55,19 +55,21 @@ const Dashboard: React.FC = () => {
   ];
 
   // Calculate dynamic weekly volume line path coordinates
-  const maxWeeklyCount = Math.max(...weeklyVolume.map(v => v.count), 1);
-  const weeklyPoints = weeklyVolume.map((v, i) => ({
-    x: 40 + i * 53, // Spaced from 40 to 358
-    y: 120 - (v.count / maxWeeklyCount) * 80, // Scale it to fit the 40-120 range
-    day: v.day,
-    count: v.count
-  }));
-
-  const linePath = weeklyPoints.reduce((acc, pt, i) => i === 0 ? `M ${pt.x} ${pt.y}` : `${acc} L ${pt.x} ${pt.y}`, '');
-  const areaPath = weeklyPoints.length > 0 ? `${linePath} L ${weeklyPoints[weeklyPoints.length - 1].x} 120 L ${weeklyPoints[0].x} 120 Z` : '';
+  const { weeklyPoints, linePath, areaPath } = useMemo(() => {
+    const maxWeeklyCount = Math.max(...weeklyVolume.map(v => v.count), 1);
+    const points = weeklyVolume.map((v, i) => ({
+      x: 40 + i * 53, // Spaced from 40 to 358
+      y: 120 - (v.count / maxWeeklyCount) * 80, // Scale it to fit the 40-120 range
+      day: v.day,
+      count: v.count
+    }));
+    const line = points.reduce((acc, pt, i) => i === 0 ? `M ${pt.x} ${pt.y}` : `${acc} L ${pt.x} ${pt.y}`, '');
+    const area = points.length > 0 ? `${line} L ${points[points.length - 1].x} 120 L ${points[0].x} 120 Z` : '';
+    return { weeklyPoints: points, linePath: line, areaPath: area };
+  }, [weeklyVolume]);
 
   // Monthly revenue helper
-  const maxMonthlyRevenue = Math.max(...monthlyRevenue.map(m => m.revenue), 100);
+  const maxMonthlyRevenue = useMemo(() => Math.max(...monthlyRevenue.map(m => m.revenue), 100), [monthlyRevenue]);
 
   return (
     <div className="space-y-6">

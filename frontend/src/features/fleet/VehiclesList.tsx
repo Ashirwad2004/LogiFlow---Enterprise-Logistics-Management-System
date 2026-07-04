@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
+import { Link } from 'react-router-dom';
 import api from '../../core/api';
-import { Truck, Plus, Loader2, Gauge, ShieldAlert, CheckCircle2, ChevronDown, ChevronUp, Calendar, Wrench, DollarSign, PlusCircle } from 'lucide-react';
+import { Truck, Plus, Loader2, Gauge, ShieldAlert, CheckCircle2, ChevronDown, ChevronUp, Calendar, Wrench, DollarSign, PlusCircle, Users } from 'lucide-react';
 
 interface MaintenanceLog {
   id: string;
@@ -184,6 +185,21 @@ const VehiclesList: React.FC = () => {
         >
           <Plus className="w-5 h-5 mr-1.5" />
           Add Vehicle
+        </button>
+      </div>
+      
+      {/* Fleet Navigation Tabs */}
+      <div className="flex border-b border-slate-200">
+        <Link
+          to="/fleet"
+          className="border-b-2 border-transparent text-slate-500 hover:text-slate-700 hover:border-slate-350 px-4 py-2.5 text-sm font-medium transition-all flex items-center gap-2"
+        >
+          <Users className="w-4 h-4" />
+          Drivers List
+        </Link>
+        <button className="border-b-2 border-blue-600 text-blue-600 px-4 py-2.5 text-sm font-semibold flex items-center gap-2">
+          <Truck className="w-4 h-4" />
+          Vehicles Fleet
         </button>
       </div>
 

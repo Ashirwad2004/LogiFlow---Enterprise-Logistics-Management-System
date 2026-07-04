@@ -5,7 +5,7 @@ from app.api.deps import get_db, get_current_user, check_role
 from app.models.user import User
 from app.models.vehicle import Vehicle
 from app.models.driver import Driver
-from app.schemas.fleet import VehicleCreate, VehicleResponse, DriverCreate, DriverResponse, VehicleMaintenanceLogCreate, VehicleMaintenanceLogResponse
+from app.schemas.fleet import VehicleCreate, VehicleResponse, DriverCreate, DriverUpdate, DriverResponse, VehicleMaintenanceLogCreate, VehicleMaintenanceLogResponse
 from uuid import UUID
 
 router = APIRouter()
@@ -58,6 +58,40 @@ def get_drivers(db: Session = Depends(get_db), current_user: User = Depends(chec
         driver.full_name = full_name
         drivers.append(driver)
     return drivers
+
+@router.put("/drivers/{driver_id}", response_model=DriverResponse)
+def update_driver(
+    driver_id: UUID,
+    driver_in: DriverUpdate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(check_role(["Company Admin", "Dispatcher"]))
+):
+    # Verify driver belongs to this company via User link
+    driver = db.query(Driver).join(User).filter(Driver.id == driver_id, User.company_id == current_user.company_id).first()
+    if not driver:
+        raise HTTPException(status_code=404, detail="Driver not found.")
+        
+    update_data = driver_in.model_dump(exclude_unset=True)
+    
+    if "assigned_vehicle_id" in update_data and update_data["assigned_vehicle_id"] is not None:
+        vehicle = db.query(Vehicle).filter(Vehicle.id == update_data["assigned_vehicle_id"], Vehicle.company_id == current_user.company_id).first()
+        if not vehicle:
+            raise HTTPException(status_code=400, detail="Vehicle not found or does not belong to this company.")
+        if vehicle.status != "active":
+            raise HTTPException(status_code=400, detail="Cannot assign driver to an inactive vehicle.")
+            
+    for field, value in update_data.items():
+        setattr(driver, field, value)
+        
+    db.add(driver)
+    db.commit()
+    db.refresh(driver)
+    
+    # fetch full name again for response
+    target_user = db.query(User).filter(User.id == driver.user_id).first()
+    driver.full_name = target_user.full_name if target_user else None
+    
+    return driver
 
 @router.post("/vehicles/{vehicle_id}/maintenance", response_model=VehicleMaintenanceLogResponse, status_code=status.HTTP_201_CREATED)
 def log_vehicle_maintenance(

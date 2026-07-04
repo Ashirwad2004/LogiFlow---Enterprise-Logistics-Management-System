@@ -53,6 +53,10 @@ def get_current_user(
                     status_code=status.HTTP_403_FORBIDDEN,
                     detail="Subscription suspended. Please contact platform support."
                 )
+    # Attach role_name for convenience
+    from app.models.role import Role
+    role = db.query(Role).filter(Role.id == user.role_id).first()
+    user.role_name = role.name if role else "No Role"
             
     return user
 

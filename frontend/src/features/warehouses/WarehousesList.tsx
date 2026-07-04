@@ -12,7 +12,6 @@ import {
   Check, 
   Box, 
   Trash2, 
-  ArrowUpRight, 
   PlusCircle 
 } from 'lucide-react';
 
@@ -30,6 +29,7 @@ interface RackItem {
   weight_kg: number;
   dimensions: string | null;
   shipment_id: string;
+  status?: string;
 }
 
 interface Rack {
@@ -59,6 +59,7 @@ interface UnassignedItem {
   dimensions: string | null;
   shipment_id: string;
   tracking_number: string;
+  status?: string;
 }
 
 const WarehousesList: React.FC = () => {
