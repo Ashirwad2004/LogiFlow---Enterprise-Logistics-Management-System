@@ -290,12 +290,14 @@ def update_shipment(
         tax_pct = float(company.tax_rate) / 100.0 if company and company.tax_rate is not None else 0.18
         
         # Calculate invoice amount
-        base_rate = 50.00
+        base_rate = float(company.base_rate) if company and company.base_rate is not None else 50.00
+        rate_per_kg = float(company.rate_per_kg) if company and company.rate_per_kg is not None else 0.50
+        
         item_charge = 0.00
         for item in shipment.items:
             weight = float(item.weight_kg or 0.0)
             quantity = int(item.quantity or 1)
-            item_charge += quantity * weight * 0.50 # $0.50 per kg
+            item_charge += quantity * weight * rate_per_kg
             
         subtotal = base_rate + item_charge
         gst_amount = subtotal * tax_pct

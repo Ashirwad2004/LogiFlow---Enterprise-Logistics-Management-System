@@ -357,7 +357,7 @@ const ShipmentDetails: React.FC = () => {
                   <div className="text-xs text-emerald-600">
                     Proof of Delivery signature and QR checks are verified. GST Billing invoice was automatically generated.
                   </div>
-                  {shipment.proof_of_delivery_url && shipment.proof_of_delivery_url.startsWith('data:image') && (
+                  {shipment.proof_of_delivery_url && (shipment.proof_of_delivery_url.startsWith('data:image') || shipment.proof_of_delivery_url.startsWith('http')) && (
                     <div className="pt-2">
                       <p className="text-2xs font-semibold text-slate-500 uppercase">Captured POD Signature</p>
                       <img src={shipment.proof_of_delivery_url} alt="POD Signature" className="h-16 border border-slate-200 rounded mt-1 bg-white" />

@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status, Request
 from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy.orm import Session
 from typing import List
@@ -17,17 +17,36 @@ from app.core.security import (
     create_password_reset_token,
     verify_password_reset_token
 )
-from pydantic import BaseModel, EmailStr
+from pydantic import BaseModel, EmailStr, field_validator
 from datetime import timedelta
 from app.core.config import settings
+import re
 
 router = APIRouter()
+
+def validate_password_strength(value: str) -> str:
+    if len(value) < 8:
+        raise ValueError("Password must be at least 8 characters long.")
+    if not re.search(r"[a-z]", value):
+        raise ValueError("Password must contain at least one lowercase letter.")
+    if not re.search(r"[A-Z]", value):
+        raise ValueError("Password must contain at least one uppercase letter.")
+    if not re.search(r"\d", value):
+        raise ValueError("Password must contain at least one digit.")
+    if not re.search(r"[!@#$%^&*(),.?\":{}|<>]", value):
+        raise ValueError("Password must contain at least one special character.")
+    return value
 
 class UserRegister(BaseModel):
     company_name: str
     admin_name: str
     admin_email: EmailStr
     admin_password: str
+
+    @field_validator("admin_password")
+    @classmethod
+    def validate_admin_password(cls, v: str) -> str:
+        return validate_password_strength(v)
 
 class RefreshTokenRequest(BaseModel):
     refresh_token: str
@@ -123,7 +142,9 @@ def register_company_and_admin(data: UserRegister, db: Session = Depends(get_db)
 
 @router.post("/token", response_model=Token)
 def login_for_access_token(
-    db: Session = Depends(get_db), form_data: OAuth2PasswordRequestForm = Depends()
+    request: Request,
+    db: Session = Depends(get_db),
+    form_data: OAuth2PasswordRequestForm = Depends()
 ):
     user = db.query(User).filter(User.email == form_data.username).first()
     if not user or not verify_password(form_data.password, user.hashed_password):
@@ -139,6 +160,20 @@ def login_for_access_token(
     )
     refresh_token = create_refresh_token(subject=str(user.id))
     
+    # Audit log login action
+    from app.services.audit import log_action
+    log_action(
+        db=db,
+        user_id=user.id,
+        action="user_login",
+        table_name="users",
+        record_id=user.id,
+        new_values={
+            "email": user.email,
+            "ip": request.client.host if request.client else "127.0.0.1"
+        }
+    )
+    
     return {
         "access_token": access_token,
         "refresh_token": refresh_token,
@@ -148,7 +183,9 @@ def login_for_access_token(
 
 @router.post("/refresh", response_model=Token)
 def refresh_access_token(
-    data: RefreshTokenRequest, db: Session = Depends(get_db)
+    data: RefreshTokenRequest,
+    request: Request,
+    db: Session = Depends(get_db)
 ):
     from jose import jwt, JWTError
     from pydantic import ValidationError
@@ -169,8 +206,25 @@ def refresh_access_token(
         raise HTTPException(status_code=404, detail="User not found")
         
     access_token = create_access_token(subject=str(user.id))
+    new_refresh_token = create_refresh_token(subject=str(user.id))
+    
+    # Audit log token refresh
+    from app.services.audit import log_action
+    log_action(
+        db=db,
+        user_id=user.id,
+        action="token_refresh",
+        table_name="users",
+        record_id=user.id,
+        new_values={
+            "email": user.email,
+            "ip": request.client.host if request.client else "127.0.0.1"
+        }
+    )
+    
     return {
         "access_token": access_token,
+        "refresh_token": new_refresh_token,
         "token_type": "bearer",
         "expires_in": settings.ACCESS_TOKEN_EXPIRE_MINUTES * 60
     }
@@ -193,6 +247,9 @@ def get_current_user_profile(current_user: User = Depends(get_current_user), db:
             "support_email": company.support_email if company else None,
             "invoice_prefix": company.invoice_prefix if company else None,
             "tax_rate": float(company.tax_rate) if company and company.tax_rate else 18.00,
+            "currency": company.currency if company else "USD",
+            "base_rate": float(company.base_rate) if company and company.base_rate is not None else 50.00,
+            "rate_per_kg": float(company.rate_per_kg) if company and company.rate_per_kg is not None else 0.50,
             "address": company.address if company else None
         },
         "permissions": [p.name for p in role.permissions] if role else []
@@ -225,6 +282,9 @@ def update_company(
         "support_email": company.support_email,
         "invoice_prefix": company.invoice_prefix,
         "tax_rate": float(company.tax_rate) if company.tax_rate else 18.00,
+        "currency": company.currency,
+        "base_rate": float(company.base_rate) if company.base_rate is not None else 50.00,
+        "rate_per_kg": float(company.rate_per_kg) if company.rate_per_kg is not None else 0.50,
         "address": company.address
     }
     
@@ -243,6 +303,9 @@ def update_company(
         "support_email": company.support_email,
         "invoice_prefix": company.invoice_prefix,
         "tax_rate": float(company.tax_rate) if company.tax_rate else 18.00,
+        "currency": company.currency,
+        "base_rate": float(company.base_rate) if company.base_rate is not None else 50.00,
+        "rate_per_kg": float(company.rate_per_kg) if company.rate_per_kg is not None else 0.50,
         "address": company.address
     }
     
@@ -291,6 +354,18 @@ def reset_password(data: ResetPasswordRequest, db: Session = Depends(get_db)):
         raise HTTPException(status_code=404, detail="User not found")
     user.hashed_password = get_password_hash(data.new_password)
     db.commit()
+    
+    # Audit log password reset
+    from app.services.audit import log_action
+    log_action(
+        db=db,
+        user_id=user.id,
+        action="password_reset",
+        table_name="users",
+        record_id=user.id,
+        new_values={"email": user.email}
+    )
+    
     return {
         "success": True,
         "message": "Password reset successfully"
@@ -301,6 +376,11 @@ class UserCreateRequest(BaseModel):
     full_name: str
     password: str
     role_name: str
+
+    @field_validator("password")
+    @classmethod
+    def validate_user_password(cls, v: str) -> str:
+        return validate_password_strength(v)
 
 @router.get("/users", response_model=List[UserSchema])
 def list_company_users(db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):

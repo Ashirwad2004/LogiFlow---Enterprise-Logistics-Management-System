@@ -13,6 +13,110 @@ from app.schemas.billing import InvoiceCreate, InvoiceResponse, PaymentCreate, P
 
 router = APIRouter()
 
+@router.get("/invoices/unbilled-shipments")
+def get_unbilled_shipments(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(check_role(["Accountant", "Company Admin", "Super Admin"]))
+):
+    """
+    Get all shipments belonging to the logged-in user's company tenant that have been delivered but have no invoice.
+    """
+    from app.models.customer import Customer
+    unbilled = db.query(Shipment).filter(
+        Shipment.company_id == current_user.company_id,
+        Shipment.status == "delivered"
+    ).filter(
+        ~db.query(Invoice).filter(Invoice.shipment_id == Shipment.id).exists()
+    ).all()
+    
+    res = []
+    for s in unbilled:
+        cust = db.query(Customer).filter(Customer.id == s.customer_id).first()
+        cust_name = cust.name if cust else "Unknown"
+        total_weight = sum(float(item.weight_kg or 0.0) * int(item.quantity or 1) for item in s.items)
+        res.append({
+            "id": str(s.id),
+            "tracking_number": s.tracking_number,
+            "pickup_address": s.pickup_address,
+            "delivery_address": s.delivery_address,
+            "actual_delivery": s.actual_delivery.isoformat() if s.actual_delivery else None,
+            "customer_name": cust_name,
+            "items_count": len(s.items),
+            "total_weight": total_weight
+        })
+    return res
+
+@router.post("/invoices/generate/{shipment_id}", response_model=InvoiceResponse, status_code=status.HTTP_201_CREATED)
+def generate_invoice_for_shipment(
+    shipment_id: UUID,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(check_role(["Accountant", "Company Admin", "Super Admin"]))
+):
+    """
+    Manually generate an invoice for a specific shipment, using the company rate cards.
+    """
+    from app.models.company import Company
+    
+    shipment = db.query(Shipment).filter(
+        Shipment.id == shipment_id,
+        Shipment.company_id == current_user.company_id
+    ).first()
+    
+    if not shipment:
+        raise HTTPException(status_code=404, detail="Shipment not found or access denied.")
+        
+    existing_invoice = db.query(Invoice).filter(Invoice.shipment_id == shipment.id).first()
+    if existing_invoice:
+        raise HTTPException(status_code=400, detail="An invoice already exists for this shipment.")
+        
+    company = db.query(Company).filter(Company.id == current_user.company_id).first()
+    prefix = company.invoice_prefix if company and company.invoice_prefix else "INV"
+    tax_pct = float(company.tax_rate) / 100.0 if company and company.tax_rate is not None else 0.18
+    base_rate = float(company.base_rate) if company and company.base_rate is not None else 50.00
+    rate_per_kg = float(company.rate_per_kg) if company and company.rate_per_kg is not None else 0.50
+    
+    item_charge = 0.00
+    for item in shipment.items:
+        weight = float(item.weight_kg or 0.0)
+        quantity = int(item.quantity or 1)
+        item_charge += quantity * weight * rate_per_kg
+        
+    subtotal = base_rate + item_charge
+    gst_amount = subtotal * tax_pct
+    total_amount = subtotal + gst_amount
+    
+    import random
+    inv_number = f"{prefix}-{datetime.now().year}-{random.randint(100000, 999999)}"
+    
+    db_invoice = Invoice(
+        shipment_id=shipment.id,
+        invoice_number=inv_number,
+        subtotal=subtotal,
+        tax_amount=gst_amount,
+        total_amount=total_amount,
+        status="unpaid",
+        issued_at=datetime.utcnow()
+    )
+    db.add(db_invoice)
+    db.commit()
+    db.refresh(db_invoice)
+    
+    # Log Action
+    from app.services.audit import log_action
+    log_action(
+        db=db,
+        user_id=current_user.id,
+        action="create_invoice",
+        table_name="invoices",
+        record_id=db_invoice.id,
+        new_values={
+            "invoice_number": db_invoice.invoice_number,
+            "total_amount": float(db_invoice.total_amount)
+        }
+    )
+    
+    return db_invoice
+
 @router.get("/invoices", response_model=List[InvoiceResponse])
 def get_invoices(db: Session = Depends(get_db), current_user: User = Depends(check_role(["Accountant", "Customer", "Company Admin", "Super Admin"]))):
     """
@@ -69,10 +173,19 @@ def create_payment(payment_in: PaymentCreate, db: Session = Depends(get_db), cur
         paid_at=datetime.utcnow() if payment_in.status == "completed" else None
     )
     db.add(payment)
+    db.flush()
     
-    # Update invoice status if payment is completed
+    # Calculate outstanding balance based on all completed payments
+    completed_payments_sum = sum(float(p.amount) for p in invoice.payments if p.status == "completed")
     if payment.status == "completed":
+        completed_payments_sum += float(payment.amount)
+        
+    if completed_payments_sum >= float(invoice.total_amount):
         invoice.status = "paid"
+    elif completed_payments_sum > 0:
+        invoice.status = "partially_paid"
+    else:
+        invoice.status = "unpaid"
         
     db.commit()
     db.refresh(payment)
@@ -93,12 +206,16 @@ def create_payment(payment_in: PaymentCreate, db: Session = Depends(get_db), cur
     
     from app.services.notifications import trigger_notification
     if payment.status == "completed":
+        from app.models.company import Company
+        company = db.query(Company).filter(Company.id == current_user.company_id).first()
+        currency = company.currency if company and company.currency else "USD"
+        symbol = "₹" if currency == "INR" else "$"
         trigger_notification(
             db=db,
             company_id=current_user.company_id,
             trigger_event="payment_logged",
             title="Invoice Payment Settled",
-            message=f"Payment of ${float(payment.amount):.2f} settled for invoice {invoice.invoice_number}."
+            message=f"Payment of {symbol}{float(payment.amount):.2f} settled for invoice {invoice.invoice_number}. Outstanding balance: {symbol}{invoice.outstanding_balance:.2f}."
         )
     return payment
 
@@ -201,7 +318,7 @@ def get_invoice_pdf(
         ],
         [
             Paragraph(f"{company.address if company else 'Logistics Depot St 15'}<br/>Support: {company.support_email if company else 'support@logiflow.com'}", normal_style),
-            Paragraph(f"<b>Invoice #:</b> {invoice.invoice_number}<br/><b>Date:</b> {invoice.issued_at.strftime('%Y-%m-%d') if invoice.issued_at else ''}<br/><b>Due Date:</b> {(invoice.issued_at + timedelta(days=15)).strftime('%Y-%m-%d') if invoice.issued_at else 'Immediate'}", ParagraphStyle('RightText', parent=normal_style, alignment=2))
+            Paragraph(f"<b>Invoice #:</b> {invoice.invoice_number}<br/><b>Status:</b> {invoice.status.upper()}<br/><b>Date:</b> {invoice.issued_at.strftime('%Y-%m-%d') if invoice.issued_at else ''}<br/><b>Due Date:</b> {(invoice.issued_at + timedelta(days=15)).strftime('%Y-%m-%d') if invoice.issued_at else 'Immediate'}", ParagraphStyle('RightText', parent=normal_style, alignment=2))
         ]
     ]
     header_table = Table(header_data, colWidths=[260, 260])
@@ -230,13 +347,16 @@ def get_invoice_pdf(
     story.append(bill_table)
     story.append(Spacer(1, 25))
     
+    currency = company.currency if company and company.currency else "USD"
+    symbol = "Rs. " if currency == "INR" else "$"
+    
     items_data = [
         [
             Paragraph("<b>Sl.</b>", bold_style),
             Paragraph("<b>Cargo Package Description</b>", bold_style),
             Paragraph("<b>Qty</b>", bold_style),
-            Paragraph("<b>Unit Price (USD)</b>", bold_style),
-            Paragraph("<b>Total Amount (USD)</b>", bold_style)
+            Paragraph(f"<b>Unit Price ({currency})</b>", bold_style),
+            Paragraph(f"<b>Total Amount ({currency})</b>", bold_style)
         ]
     ]
     
@@ -256,16 +376,16 @@ def get_invoice_pdf(
                 Paragraph(str(idx), normal_style),
                 Paragraph(f"{item.description} ({weight} kg)", normal_style),
                 Paragraph(str(qty), normal_style),
-                Paragraph(f"${item_price:.2f}", normal_style),
-                Paragraph(f"${item_total:.2f}", normal_style)
+                Paragraph(f"{symbol}{item_price:.2f}", normal_style),
+                Paragraph(f"{symbol}{item_total:.2f}", normal_style)
             ])
     else:
         items_data.append([
             Paragraph("1", normal_style),
             Paragraph("Freight Carriage Logistics Service Cargo", normal_style),
             Paragraph("1", normal_style),
-            Paragraph(f"${subtotal:.2f}", normal_style),
-            Paragraph(f"${subtotal:.2f}", normal_style)
+            Paragraph(f"{symbol}{subtotal:.2f}", normal_style),
+            Paragraph(f"{symbol}{subtotal:.2f}", normal_style)
         ])
         
     items_table = Table(items_data, colWidths=[30, 240, 50, 100, 100])
@@ -280,9 +400,10 @@ def get_invoice_pdf(
     story.append(Spacer(1, 15))
     
     summary_data = [
-        [Paragraph("", normal_style), Paragraph("<b>Subtotal:</b>", ParagraphStyle('Sub', parent=normal_style, alignment=2)), Paragraph(f"${subtotal:.2f}", ParagraphStyle('Val', parent=normal_style, alignment=2))],
-        [Paragraph("", normal_style), Paragraph(f"<b>GST Tax ({tax_pct:.2f}%):</b>", ParagraphStyle('Tax', parent=normal_style, alignment=2)), Paragraph(f"${tax_amount:.2f}", ParagraphStyle('Val', parent=normal_style, alignment=2))],
-        [Paragraph("", normal_style), Paragraph("<b>Total Payable Due:</b>", ParagraphStyle('Tot', parent=bold_style, alignment=2)), Paragraph(f"${total_due:.2f}", ParagraphStyle('ValBold', parent=bold_style, alignment=2))]
+        [Paragraph("", normal_style), Paragraph("<b>Subtotal:</b>", ParagraphStyle('Sub', parent=normal_style, alignment=2)), Paragraph(f"{symbol}{subtotal:.2f}", ParagraphStyle('Val', parent=normal_style, alignment=2))],
+        [Paragraph("", normal_style), Paragraph(f"<b>GST Tax ({tax_pct:.2f}%):</b>", ParagraphStyle('Tax', parent=normal_style, alignment=2)), Paragraph(f"{symbol}{tax_amount:.2f}", ParagraphStyle('Val', parent=normal_style, alignment=2))],
+        [Paragraph("", normal_style), Paragraph("<b>Total Payable Due:</b>", ParagraphStyle('Tot', parent=bold_style, alignment=2)), Paragraph(f"{symbol}{total_due:.2f}", ParagraphStyle('ValBold', parent=bold_style, alignment=2))],
+        [Paragraph("", normal_style), Paragraph("<b>Outstanding Balance:</b>", ParagraphStyle('Out', parent=bold_style, alignment=2)), Paragraph(f"{symbol}{invoice.outstanding_balance:.2f}", ParagraphStyle('ValOutBold', parent=bold_style, alignment=2))]
     ]
     summary_table = Table(summary_data, colWidths=[280, 140, 100])
     summary_table.setStyle(TableStyle([

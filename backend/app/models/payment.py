@@ -1,5 +1,6 @@
 from sqlalchemy import Column, String, Numeric, ForeignKey, DateTime
 from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy.orm import relationship
 from app.db.base_class import Base
 import uuid
 
@@ -13,3 +14,5 @@ class Payment(Base):
     transaction_reference = Column(String(100), unique=True, nullable=True)
     status = Column(String(50), default="pending")
     paid_at = Column(DateTime(timezone=True), nullable=True)
+
+    invoice = relationship("Invoice", back_populates="payments")

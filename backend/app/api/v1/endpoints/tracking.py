@@ -42,7 +42,7 @@ async def update_coordinates(
     *,
     db: Session = Depends(get_db),
     tracking_in: TrackingCoordinates,
-    current_user: User = Depends(check_role(["Driver"]))
+    current_user: User = Depends(check_role(["Driver", "Dispatcher"]))
 ) -> Any:
     shipment = db.query(Shipment).filter(
         Shipment.id == tracking_in.shipment_id,
@@ -163,7 +163,8 @@ def get_public_shipment_tracking(
                     "address": company.address if company else "LogiFlow Tech Way",
                     "gst_number": company.gst_number if company else None,
                     "support_email": company.support_email if company else "support@logiflow.com",
-                    "tax_rate": float(company.tax_rate) if company and company.tax_rate else 18.0
+                    "tax_rate": float(company.tax_rate) if company and company.tax_rate else 18.0,
+                    "currency": company.currency if company else "USD"
                 }
             }
             

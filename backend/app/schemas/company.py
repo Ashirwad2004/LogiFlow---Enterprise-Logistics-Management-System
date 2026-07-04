@@ -11,6 +11,9 @@ class CompanyBase(BaseModel):
     support_email: Optional[EmailStr] = None
     invoice_prefix: Optional[str] = "INV"
     tax_rate: Optional[float] = 18.0
+    currency: Optional[str] = "USD"
+    base_rate: Optional[float] = 50.00
+    rate_per_kg: Optional[float] = 0.50
     address: Optional[str] = None
 
 class CompanyCreate(CompanyBase):
@@ -24,6 +27,9 @@ class CompanyUpdate(BaseModel):
     support_email: Optional[EmailStr] = None
     invoice_prefix: Optional[str] = None
     tax_rate: Optional[float] = None
+    currency: Optional[str] = None
+    base_rate: Optional[float] = None
+    rate_per_kg: Optional[float] = None
     address: Optional[str] = None
 
 class CompanyResponse(CompanyBase):

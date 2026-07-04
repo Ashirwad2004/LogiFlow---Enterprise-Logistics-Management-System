@@ -20,6 +20,7 @@ class InvoiceCreate(InvoiceBase):
 class InvoiceResponse(InvoiceBase):
     id: UUID
     issued_at: datetime
+    outstanding_balance: float
 
     class Config:
         from_attributes = True

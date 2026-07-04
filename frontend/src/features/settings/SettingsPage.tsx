@@ -32,6 +32,9 @@ const SettingsPage: React.FC = () => {
   const [supportEmail, setSupportEmail] = useState('');
   const [invoicePrefix, setInvoicePrefix] = useState('');
   const [taxRate, setTaxRate] = useState('18');
+  const [currency, setCurrency] = useState('USD');
+  const [baseRate, setBaseRate] = useState('50.00');
+  const [ratePerKg, setRatePerKg] = useState('0.50');
   const [address, setAddress] = useState('');
   const [updatingSettings, setUpdatingSettings] = useState(false);
   const [settingsSaved, setSettingsSaved] = useState(false);
@@ -87,6 +90,9 @@ const SettingsPage: React.FC = () => {
         setSupportEmail(comp.support_email || '');
         setInvoicePrefix(comp.invoice_prefix || 'INV');
         setTaxRate(comp.tax_rate ? String(comp.tax_rate) : '18');
+        setCurrency(comp.currency || 'USD');
+        setBaseRate(comp.base_rate !== undefined ? String(comp.base_rate) : '50.00');
+        setRatePerKg(comp.rate_per_kg !== undefined ? String(comp.rate_per_kg) : '0.50');
         setAddress(comp.address || '');
       }
     } catch (error) {
@@ -115,6 +121,9 @@ const SettingsPage: React.FC = () => {
         support_email: supportEmail,
         invoice_prefix: invoicePrefix,
         tax_rate: parseFloat(taxRate) || 18.00,
+        currency: currency,
+        base_rate: parseFloat(baseRate) || 50.00,
+        rate_per_kg: parseFloat(ratePerKg) || 0.50,
         address: address
       });
       setSettingsSaved(true);
@@ -251,7 +260,7 @@ const SettingsPage: React.FC = () => {
               />
             </div>
 
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-3 gap-4">
               <div>
                 <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wider">Invoice Prefix</label>
                 <input
@@ -269,6 +278,42 @@ const SettingsPage: React.FC = () => {
                   required
                   value={taxRate}
                   onChange={(e) => setTaxRate(e.target.value)}
+                  className="mt-1 block w-full px-3 py-2 border border-slate-300 rounded-lg text-sm bg-white focus:outline-none focus:ring-blue-500"
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wider">Currency</label>
+                <select
+                  value={currency}
+                  onChange={(e) => setCurrency(e.target.value)}
+                  className="mt-1 block w-full px-3 py-2 border border-slate-300 rounded-lg text-sm bg-white focus:outline-none focus:ring-blue-500"
+                >
+                  <option value="USD">USD ($)</option>
+                  <option value="INR">INR (₹)</option>
+                </select>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wider">Base Shipping Rate ({currency === 'INR' ? '₹' : '$'})</label>
+                <input
+                  type="number"
+                  step="0.01"
+                  required
+                  value={baseRate}
+                  onChange={(e) => setBaseRate(e.target.value)}
+                  className="mt-1 block w-full px-3 py-2 border border-slate-300 rounded-lg text-sm bg-white focus:outline-none focus:ring-blue-500"
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wider">Weight Rate Per KG ({currency === 'INR' ? '₹' : '$'})</label>
+                <input
+                  type="number"
+                  step="0.01"
+                  required
+                  value={ratePerKg}
+                  onChange={(e) => setRatePerKg(e.target.value)}
                   className="mt-1 block w-full px-3 py-2 border border-slate-300 rounded-lg text-sm bg-white focus:outline-none focus:ring-blue-500"
                 />
               </div>

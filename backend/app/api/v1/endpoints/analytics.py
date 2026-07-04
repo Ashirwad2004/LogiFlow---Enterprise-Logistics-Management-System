@@ -65,54 +65,82 @@ def get_dashboard_metrics(db: Session = Depends(get_db), current_user: User = De
     
     # 1. Weekly Shipment Volume (last 7 rolling days)
     today = datetime.date.today()
+    seven_days_ago = today - datetime.timedelta(days=6)
+    start_of_period = datetime.datetime.combine(seven_days_ago, datetime.time.min)
+    
+    shipments_by_day_query = db.query(
+        func.date(Shipment.created_at).label("creation_date"),
+        func.count(Shipment.id).label("count")
+    ).filter(
+        Shipment.company_id == company_id,
+        Shipment.created_at >= start_of_period
+    )
+    if is_customer and customer_id:
+        shipments_by_day_query = shipments_by_day_query.filter(Shipment.customer_id == customer_id)
+    elif is_customer and not customer_id:
+        shipments_by_day_query = shipments_by_day_query.filter(Shipment.id == None)
+        
+    shipments_by_day = shipments_by_day_query.group_by(
+        func.date(Shipment.created_at)
+    ).all()
+    
+    counts_map = {}
+    for d_val, count in shipments_by_day:
+        d_str = d_val.isoformat() if hasattr(d_val, "isoformat") else str(d_val)
+        counts_map[d_str] = count
+        
     weekly_volume = []
     for i in range(6, -1, -1):
         d = today - datetime.timedelta(days=i)
         day_str = d.strftime("%a")
-        start_time = datetime.datetime.combine(d, datetime.time.min)
-        end_time = datetime.datetime.combine(d, datetime.time.max)
-        q_count = db.query(Shipment).filter(
-            Shipment.company_id == company_id,
-            Shipment.created_at >= start_time,
-            Shipment.created_at <= end_time
-        )
-        if is_customer and customer_id:
-            q_count = q_count.filter(Shipment.customer_id == customer_id)
-        elif is_customer and not customer_id:
-            q_count = q_count.filter(Shipment.id == None)
-        count = q_count.count()
+        date_iso = d.isoformat()
+        count = counts_map.get(date_iso, 0)
         weekly_volume.append({"day": day_str, "count": count})
         
     # 2. Monthly Payouts / Revenue (last 4 rolling months)
+    first_day_current = today.replace(day=1)
+    m_val = first_day_current.month - 3
+    y_val = first_day_current.year
+    while m_val <= 0:
+        m_val += 12
+        y_val -= 1
+    start_of_4_months_ago = datetime.date(y_val, m_val, 1)
+    start_datetime = datetime.datetime.combine(start_of_4_months_ago, datetime.time.min)
+    
+    revenue_by_month_query = db.query(
+        func.date_trunc('month', Invoice.issued_at).label("month_date"),
+        func.sum(Invoice.total_amount).label("revenue")
+    ).join(Shipment).filter(
+        Shipment.company_id == company_id,
+        Invoice.issued_at >= start_datetime
+    )
+    
+    if is_customer and customer_id:
+        revenue_by_month_query = revenue_by_month_query.filter(Shipment.customer_id == customer_id)
+    elif is_customer and not customer_id:
+        revenue_by_month_query = revenue_by_month_query.filter(Shipment.id == None)
+        
+    revenue_by_month = revenue_by_month_query.group_by(
+        func.date_trunc('month', Invoice.issued_at)
+    ).all()
+    
+    rev_map = {}
+    for month_date, revenue in revenue_by_month:
+        if month_date:
+            rev_map[(month_date.year, month_date.month)] = revenue
+            
     monthly_revenue = []
     for i in range(3, -1, -1):
-        first_day_current = today.replace(day=1)
-        month_val = first_day_current.month - i
-        year_val = first_day_current.year
-        while month_val <= 0:
-            month_val += 12
-            year_val -= 1
-        
-        m_start = datetime.date(year_val, month_val, 1)
-        if month_val == 12:
-            m_end = datetime.date(year_val + 1, 1, 1) - datetime.timedelta(days=1)
-        else:
-            m_end = datetime.date(year_val, month_val + 1, 1) - datetime.timedelta(days=1)
+        m_val = first_day_current.month - i
+        y_val = first_day_current.year
+        while m_val <= 0:
+            m_val += 12
+            y_val -= 1
             
+        m_start = datetime.date(y_val, m_val, 1)
         month_label = m_start.strftime("%B")
         
-        # Sum both paid and unpaid invoices to represent generated freight revenue
-        q_rev = db.query(func.sum(Invoice.total_amount)).join(Shipment).filter(
-            Shipment.company_id == company_id,
-            Invoice.issued_at >= datetime.datetime.combine(m_start, datetime.time.min),
-            Invoice.issued_at <= datetime.datetime.combine(m_end, datetime.time.max)
-        )
-        if is_customer and customer_id:
-            q_rev = q_rev.filter(Shipment.customer_id == customer_id)
-        elif is_customer and not customer_id:
-            q_rev = q_rev.filter(Shipment.id == None)
-            
-        rev = q_rev.scalar() or 0.0
+        rev = rev_map.get((y_val, m_val), 0.0)
         
         monthly_revenue.append({
             "month": month_label,

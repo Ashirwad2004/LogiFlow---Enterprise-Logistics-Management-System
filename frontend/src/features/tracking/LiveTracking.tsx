@@ -144,8 +144,9 @@ const LiveTracking: React.FC = () => {
   useEffect(() => {
     if (!selectedShipmentId) return;
     
-    const wsProto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const wsUrl = `${wsProto}//127.0.0.1:8000/api/v1/tracking/ws/${selectedShipmentId}`;
+    const baseURL = api.defaults.baseURL || 'http://127.0.0.1:8000/api/v1';
+    const wsBase = baseURL.replace(/^http/, 'ws');
+    const wsUrl = `${wsBase}/tracking/ws/${selectedShipmentId}`;
     const socket = new WebSocket(wsUrl);
     
     socket.onmessage = (event) => {

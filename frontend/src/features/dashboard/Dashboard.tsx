@@ -2,6 +2,7 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Package, Truck, Receipt, Users, TrendingUp, AlertTriangle, Building, Settings, CheckCircle2, ChevronRight } from 'lucide-react';
 import api from '../../core/api';
+import { useAuth } from '../../core/AuthContext';
 
 interface MetricStats {
   active_shipments: number;
@@ -19,6 +20,10 @@ interface AlertItem {
 
 const Dashboard: React.FC = () => {
   const navigate = useNavigate();
+  const { user } = useAuth();
+  
+  const currencySymbol = user?.company?.currency === 'INR' ? '₹' : '$';
+  
   const [metrics, setMetrics] = useState<MetricStats>({
     active_shipments: 0,
     available_drivers: 0,
@@ -51,7 +56,7 @@ const Dashboard: React.FC = () => {
     { name: 'Active Shipments', value: metrics.active_shipments.toString(), icon: Package, change: '+12%', changeType: 'positive', path: '/shipments' },
     { name: 'Available Drivers', value: metrics.available_drivers.toString(), icon: Users, change: 'Optimal', changeType: 'neutral', path: '/fleet' },
     { name: 'Vehicles on Duty', value: metrics.active_vehicles.toString(), icon: Truck, change: 'Active', changeType: 'positive', path: '/vehicles' },
-    { name: 'Pending Invoices', value: `$${metrics.pending_revenue.toFixed(2)}`, icon: Receipt, change: 'GST incl.', changeType: 'neutral', path: '/billing' },
+    { name: 'Pending Invoices', value: `${currencySymbol}${metrics.pending_revenue.toFixed(2)}`, icon: Receipt, change: 'GST incl.', changeType: 'neutral', path: '/billing' },
   ];
 
   // Calculate dynamic weekly volume line path coordinates
@@ -174,7 +179,7 @@ const Dashboard: React.FC = () => {
         {/* Monthly Revenue SVG Chart */}
         <div className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm space-y-4">
           <div>
-            <h3 className="text-sm font-bold text-slate-800">Monthly Freight Revenue ($)</h3>
+            <h3 className="text-sm font-bold text-slate-800">Monthly Freight Revenue ({currencySymbol})</h3>
             <p className="text-xs text-slate-500 mt-0.5">Calculated subtotal and GST payouts logged across months.</p>
           </div>
           
@@ -198,7 +203,7 @@ const Dashboard: React.FC = () => {
                     <g key={i}>
                       <rect x={x} y={y} width={width} height={height} rx={4} fill={i === 3 ? "#2563eb" : "#60a5fa"} />
                       <text x={x + 17.5} y={y - 8} fill={i === 3 ? "#2563eb" : "#475569"} fontSize="8" fontWeight="bold" textAnchor="middle">
-                        {m.revenue > 0 ? `$${Math.round(m.revenue)}` : '$0'}
+                        {m.revenue > 0 ? `${currencySymbol}${Math.round(m.revenue)}` : `${currencySymbol}0`}
                       </text>
                       <text x={x + 17.5} y="140" fill="#94a3b8" fontSize="9" textAnchor="middle">
                         {m.month.substring(0, 3)}

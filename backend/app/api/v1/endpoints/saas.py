@@ -36,6 +36,7 @@ def get_companies(
             "invoice_prefix": c.invoice_prefix,
             "tax_rate": float(c.tax_rate) if c.tax_rate else 18.00,
             "address": c.address,
+            "currency": c.currency,
             "created_at": c.created_at.isoformat() if c.created_at else None
         })
     return response

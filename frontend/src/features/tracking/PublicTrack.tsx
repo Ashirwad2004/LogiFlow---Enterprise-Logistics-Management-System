@@ -70,6 +70,7 @@ const PublicTrack: React.FC = () => {
   
   const [searchQuery, setSearchQuery] = useState(routeParam || '');
   const [trackingData, setTrackingData] = useState<TrackingData | null>(null);
+  const currencySymbol = (trackingData?.invoice?.company as any)?.currency === 'INR' ? '₹' : '$';
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   
@@ -108,8 +109,8 @@ const PublicTrack: React.FC = () => {
 
   useEffect(() => {
     if (!trackingData?.id) return;
-    const wsProto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const wsUrl = `${wsProto}//127.0.0.1:8000/api/v1/tracking/ws/${trackingData.id}`;
+    const wsBase = API_BASE_URL.replace(/^http/, 'ws');
+    const wsUrl = `${wsBase}/tracking/ws/${trackingData.id}`;
     const socket = new WebSocket(wsUrl);
     
     socket.onmessage = (event) => {
@@ -430,6 +431,12 @@ const PublicTrack: React.FC = () => {
                           <p className="text-sm font-semibold text-emerald-800 mt-0.5">
                             {new Date(trackingData.actual_delivery).toLocaleString()}
                           </p>
+                          {trackingData.proof_of_delivery_url && (trackingData.proof_of_delivery_url.startsWith('data:image') || trackingData.proof_of_delivery_url.startsWith('http')) && (
+                            <div className="mt-2.5 p-2 bg-slate-50 border border-slate-200 rounded-lg w-fit">
+                              <span className="block text-[8px] font-extrabold text-slate-400 uppercase">Captured POD Signature</span>
+                              <img src={trackingData.proof_of_delivery_url} alt="POD Signature" className="h-12 mt-1 bg-white border border-slate-100 rounded" />
+                            </div>
+                          )}
                         </div>
                       </div>
                     )}
@@ -554,7 +561,7 @@ const PublicTrack: React.FC = () => {
                               <p className="font-bold text-slate-800">Standard Freight Delivery</p>
                               <p className="text-[10px] text-slate-500 mt-0.5">Route: {trackingData.pickup_address} &rarr; {trackingData.delivery_address}</p>
                             </td>
-                            <td className="text-right font-medium">${trackingData.invoice.subtotal.toFixed(2)}</td>
+                            <td className="text-right font-medium">{currencySymbol}{trackingData.invoice.subtotal.toFixed(2)}</td>
                           </tr>
                         </tbody>
                       </table>
@@ -564,15 +571,15 @@ const PublicTrack: React.FC = () => {
                       <div className="w-48 space-y-2">
                         <div className="flex justify-between text-slate-500">
                           <span>Subtotal:</span>
-                          <span>${trackingData.invoice.subtotal.toFixed(2)}</span>
+                          <span>{currencySymbol}{trackingData.invoice.subtotal.toFixed(2)}</span>
                         </div>
                         <div className="flex justify-between text-slate-500">
                           <span>GST ({trackingData.invoice.company.tax_rate}%):</span>
-                          <span>${trackingData.invoice.tax_amount.toFixed(2)}</span>
+                          <span>{currencySymbol}{trackingData.invoice.tax_amount.toFixed(2)}</span>
                         </div>
                         <div className="flex justify-between text-sm font-bold text-slate-850 border-t border-slate-100 pt-2 print:text-black">
                           <span>Total Amount:</span>
-                          <span>${trackingData.invoice.total_amount.toFixed(2)}</span>
+                          <span>{currencySymbol}{trackingData.invoice.total_amount.toFixed(2)}</span>
                         </div>
                       </div>
                     </div>

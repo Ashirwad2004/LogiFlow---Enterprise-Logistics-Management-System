@@ -35,36 +35,37 @@ def get_current_user(
             detail="Could not validate credentials",
             headers={"WWW-Authenticate": "Bearer"},
         )
-    user = db.query(User).filter(User.id == token_data.sub).first()
-    if not user:
+    from app.models.company import Company
+    from app.models.role import Role
+
+    result = db.query(User, Company, Role).outerjoin(
+        Company, User.company_id == Company.id
+    ).join(
+        Role, User.role_id == Role.id
+    ).filter(User.id == token_data.sub).first()
+
+    if not result:
         raise HTTPException(status_code=404, detail="User not found")
+        
+    user, company, role = result
     if not user.is_active:
         raise HTTPException(status_code=400, detail="Inactive user")
         
-    # Check if company subscription is suspended (Super Admin bypasses)
-    if user.company_id:
-        from app.models.company import Company
-        company = db.query(Company).filter(Company.id == user.company_id).first()
-        if company and company.subscription_status == "suspended":
-            from app.models.role import Role
-            role = db.query(Role).filter(Role.id == user.role_id).first()
-            if not role or role.name != "Super Admin":
-                raise HTTPException(
-                    status_code=status.HTTP_403_FORBIDDEN,
-                    detail="Subscription suspended. Please contact platform support."
-                )
-    # Attach role_name for convenience
-    from app.models.role import Role
-    role = db.query(Role).filter(Role.id == user.role_id).first()
     user.role_name = role.name if role else "No Role"
+        
+    # Check if company subscription is suspended (Super Admin bypasses)
+    if company and company.subscription_status == "suspended":
+        if user.role_name != "Super Admin":
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Subscription suspended. Please contact platform support."
+            )
             
     return user
 
 def check_role(allowed_roles: List[str]):
-    def role_dependency(current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
-        from app.models.role import Role
-        role = db.query(Role).filter(Role.id == current_user.role_id).first()
-        role_name = role.name if role else "No Role"
+    def role_dependency(current_user: User = Depends(get_current_user)):
+        role_name = current_user.role_name
         if role_name in ["Company Admin", "Super Admin"]:
             return current_user
         if role_name not in allowed_roles:
