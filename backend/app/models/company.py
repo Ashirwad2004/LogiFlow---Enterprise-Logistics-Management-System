@@ -1,4 +1,4 @@
-from sqlalchemy import Column, String, TIMESTAMP, text, Numeric
+from sqlalchemy import Column, String, TIMESTAMP, text, Numeric, Boolean
 from sqlalchemy.dialects.postgresql import UUID
 from app.db.base_class import Base
 
@@ -18,6 +18,7 @@ class Company(Base):
     base_rate = Column(Numeric(10, 2), default=50.00, nullable=False, server_default="50.00")
     rate_per_kg = Column(Numeric(10, 2), default=0.50, nullable=False, server_default="0.50")
     address = Column(String)
+    is_e_invoice_enabled = Column(Boolean, default=False, nullable=False, server_default="false")
     created_at = Column(TIMESTAMP, server_default=text("now()"), nullable=False)
     updated_at = Column(TIMESTAMP, server_default=text("now()"), nullable=False)
 

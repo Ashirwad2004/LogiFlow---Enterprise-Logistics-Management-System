@@ -21,6 +21,7 @@ class Invoice(Base):
 
     payments = relationship("Payment", back_populates="invoice", cascade="all, delete-orphan")
     eway_bill = relationship("EWayBill", back_populates="invoice", uselist=False, cascade="all, delete-orphan")
+    e_invoice = relationship("EInvoice", back_populates="invoice", uselist=False, cascade="all, delete-orphan")
 
     @property
     def outstanding_balance(self) -> float:

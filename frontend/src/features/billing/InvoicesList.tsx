@@ -37,6 +37,17 @@ interface EWayBill {
   generated_at: string | null;
 }
 
+interface EInvoice {
+  id: string;
+  invoice_id: string;
+  irn: string;
+  ack_no: string;
+  ack_date: string;
+  status: string;
+  signed_invoice: string;
+  signed_qr_code: string;
+}
+
 interface Invoice {
   id: string;
   invoice_number: string;
@@ -46,6 +57,7 @@ interface Invoice {
   issued_at: string;
   shipment_id: string;
   eway_bill?: EWayBill | null;
+  e_invoice?: EInvoice | null;
 }
 
 interface UnbilledShipment {
@@ -113,6 +125,8 @@ const InvoicesList: React.FC = () => {
   const [loadingHistory, setLoadingHistory] = useState(false);
 
   const [company, setCompany] = useState<any>(null);
+  const [generatingEInvoice, setGeneratingEInvoice] = useState(false);
+  const [eInvoiceError, setEInvoiceError] = useState('');
   
   const currencySymbol = company?.currency === 'INR' ? '₹' : '$';
 
@@ -432,6 +446,21 @@ const InvoicesList: React.FC = () => {
     } finally {
       setLoadingDetails(false);
       setLoadingHistory(false);
+    }
+  };
+
+  const handleGenerateEInvoice = async (invoiceId: string) => {
+    setGeneratingEInvoice(true);
+    setEInvoiceError('');
+    try {
+      const response = await api.post(`/billing/invoices/${invoiceId}/e-invoice`);
+      setSelectedInvoice(prev => prev ? { ...prev, e_invoice: response.data } : null);
+      await fetchInvoices();
+    } catch (err: any) {
+      console.error('E-Invoice generation failed', err);
+      setEInvoiceError(err.response?.data?.detail || 'Failed to generate E-Invoice.');
+    } finally {
+      setGeneratingEInvoice(false);
     }
   };
 
@@ -998,6 +1027,15 @@ const InvoicesList: React.FC = () => {
                 </div>
               )}
 
+              {company?.is_e_invoice_enabled && !selectedEWayInvoice.e_invoice && (
+                <div className="bg-rose-50 border border-rose-250 text-rose-800 text-xs rounded-lg p-3 flex items-start space-x-2">
+                  <AlertCircle className="w-4 h-4 mt-0.5 flex-shrink-0" />
+                  <div>
+                    <span className="font-bold">E-Invoice Block:</span> E-Invoicing is enabled. Under CGST Rule 138, you must generate the E-Invoice IRN first before you can generate the E-Way Bill. Please close this modal, generate the IRN from the invoice details screen, and try again.
+                  </div>
+                </div>
+              )}
+
               {selectedEWayInvoice.total_amount > 50000 && (
                 <div className="bg-amber-50 border border-amber-250 text-amber-800 text-2xs rounded-lg p-3 flex items-start space-x-2">
                   <AlertCircle className="w-4 h-4 mt-0.5 flex-shrink-0" />
@@ -1091,7 +1129,7 @@ const InvoicesList: React.FC = () => {
                 </button>
                 <button
                   type="submit"
-                  disabled={generatingEWay}
+                  disabled={generatingEWay || (company?.is_e_invoice_enabled && !selectedEWayInvoice.e_invoice)}
                   className="px-4 py-2 bg-amber-500 hover:bg-amber-650 text-white rounded-lg text-xs font-bold transition-colors inline-flex items-center disabled:opacity-50 cursor-pointer"
                 >
                   {generatingEWay && <Loader2 className="animate-spin -ml-1 mr-1.5 h-3.5 w-3.5" />}
@@ -1413,6 +1451,67 @@ const InvoicesList: React.FC = () => {
                       </div>
                     </div>
                   </div>
+
+                  {/* E-Invoice NIC Verification details */}
+                  {selectedInvoice.e_invoice ? (
+                    <div className="border-t border-blue-200 bg-blue-50/20 p-4 rounded-xl space-y-3">
+                      <h4 className="text-xs font-bold text-blue-800 uppercase tracking-wider flex items-center">
+                        <ShieldCheck className="w-4 h-4 mr-1 text-blue-600" /> Government E-Invoice Verification (NIC)
+                      </h4>
+                      <div className="grid grid-cols-1 gap-2 text-xs">
+                        <p className="break-all"><span className="font-semibold text-slate-500">IRN:</span> <span className="font-mono font-bold text-slate-800">{selectedInvoice.e_invoice.irn}</span></p>
+                        <div className="grid grid-cols-2 gap-4">
+                          <p><span className="font-semibold text-slate-500">Ack No:</span> <span className="font-bold text-slate-800">{selectedInvoice.e_invoice.ack_no}</span></p>
+                          <p><span className="font-semibold text-slate-500">Ack Date:</span> <span className="font-bold text-slate-800">{new Date(selectedInvoice.e_invoice.ack_date).toLocaleString()}</span></p>
+                        </div>
+                      </div>
+                      <div className="pt-2 border-t border-blue-100 flex items-center space-x-3">
+                        <div className="p-1 bg-white border border-slate-200 rounded">
+                          <img
+                            src={`https://api.qrserver.com/v1/create-qr-code/?size=80x80&data=${encodeURIComponent(selectedInvoice.e_invoice.signed_qr_code)}`}
+                            alt="E-Invoice QR Code"
+                            className="w-12 h-12 block"
+                          />
+                        </div>
+                        <div className="text-[10px] text-slate-450 leading-relaxed max-w-sm">
+                          <p className="font-bold text-slate-500">Government Encrypted QR Signature</p>
+                          <p className="mt-0.5">This invoice is registered electronically with the Indian GST portal. IRN hash is authenticated and verified.</p>
+                        </div>
+                      </div>
+                    </div>
+                  ) : company?.is_e_invoice_enabled ? (
+                    <div className="border-t border-blue-200 bg-blue-50/10 p-4 rounded-xl space-y-3">
+                      <div className="flex justify-between items-center">
+                        <div>
+                          <h4 className="text-xs font-bold text-blue-800 uppercase tracking-wider flex items-center">
+                            <FileText className="w-4 h-4 mr-1 text-blue-600" /> E-Invoice API Registration Required
+                          </h4>
+                          <p className="text-[11px] text-slate-500 mt-1">This transaction requires government IRN registration before E-Way Bill generation.</p>
+                        </div>
+                        <button
+                          type="button"
+                          disabled={generatingEInvoice}
+                          onClick={() => handleGenerateEInvoice(selectedInvoice.id)}
+                          className="px-3.5 py-1.5 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white font-semibold text-xs rounded-lg shadow-sm transition-colors cursor-pointer flex items-center"
+                        >
+                          {generatingEInvoice ? (
+                            <>
+                              <Loader2 className="animate-spin -ml-1 mr-1 h-3 w-3" />
+                              Generating IRN...
+                            </>
+                          ) : (
+                            'Generate IRN'
+                          )}
+                        </button>
+                      </div>
+                      {eInvoiceError && (
+                        <div className="bg-rose-50 border border-rose-250 text-rose-800 text-2xs rounded-lg p-2.5 flex items-start space-x-1.5">
+                          <AlertCircle className="w-3.5 h-3.5 mt-0.5 flex-shrink-0" />
+                          <span>{eInvoiceError}</span>
+                        </div>
+                      )}
+                    </div>
+                  ) : null}
 
                   {/* e-Way Bill NIC Verification details */}
                   {selectedInvoice.eway_bill && selectedInvoice.eway_bill.status !== 'cancelled' && (

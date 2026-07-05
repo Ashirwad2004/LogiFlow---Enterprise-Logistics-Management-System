@@ -18,12 +18,14 @@ class InvoiceCreate(InvoiceBase):
     pass
 
 from app.schemas.eway_bill import EWayBillResponse
+from app.schemas.e_invoice import EInvoiceResponse
 
 class InvoiceResponse(InvoiceBase):
     id: UUID
     issued_at: datetime
     outstanding_balance: float
     eway_bill: Optional[EWayBillResponse] = None
+    e_invoice: Optional[EInvoiceResponse] = None
 
     class Config:
         from_attributes = True

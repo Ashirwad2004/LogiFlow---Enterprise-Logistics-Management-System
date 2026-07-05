@@ -36,6 +36,7 @@ const SettingsPage: React.FC = () => {
   const [baseRate, setBaseRate] = useState('50.00');
   const [ratePerKg, setRatePerKg] = useState('0.50');
   const [address, setAddress] = useState('');
+  const [isEInvoiceEnabled, setIsEInvoiceEnabled] = useState(false);
   const [updatingSettings, setUpdatingSettings] = useState(false);
   const [settingsSaved, setSettingsSaved] = useState(false);
 
@@ -94,6 +95,7 @@ const SettingsPage: React.FC = () => {
         setBaseRate(comp.base_rate !== undefined ? String(comp.base_rate) : '50.00');
         setRatePerKg(comp.rate_per_kg !== undefined ? String(comp.rate_per_kg) : '0.50');
         setAddress(comp.address || '');
+        setIsEInvoiceEnabled(comp.is_e_invoice_enabled || false);
       }
     } catch (error) {
       console.error('Failed to load company profile settings', error);
@@ -124,7 +126,8 @@ const SettingsPage: React.FC = () => {
         currency: currency,
         base_rate: parseFloat(baseRate) || 50.00,
         rate_per_kg: parseFloat(ratePerKg) || 0.50,
-        address: address
+        address: address,
+        is_e_invoice_enabled: isEInvoiceEnabled
       });
       setSettingsSaved(true);
       setTimeout(() => setSettingsSaved(false), 3000);
@@ -329,6 +332,22 @@ const SettingsPage: React.FC = () => {
                 placeholder="e.g. 100 Logistics Tech Way, Bandra East, Mumbai - 400051"
                 className="mt-1 block w-full px-3 py-2 border border-slate-300 rounded-lg text-sm bg-white focus:outline-none focus:ring-blue-500"
               />
+            </div>
+
+            <div className="flex items-start bg-slate-50 border border-slate-200 rounded-xl p-4 mt-2">
+              <div className="flex items-center h-5">
+                <input
+                  id="isEInvoiceEnabled"
+                  type="checkbox"
+                  checked={isEInvoiceEnabled}
+                  onChange={(e) => setIsEInvoiceEnabled(e.target.checked)}
+                  className="focus:ring-blue-500 h-4 w-4 text-blue-600 border-slate-300 rounded cursor-pointer"
+                />
+              </div>
+              <div className="ml-3 text-sm">
+                <label htmlFor="isEInvoiceEnabled" className="font-bold text-slate-700 cursor-pointer">Enable E-Invoice API System</label>
+                <p className="text-slate-500 text-xs mt-0.5">Enforces IRN generation under CGST Rules for B2B/Export transactions. Blocks direct E-Way Bill generation unless E-Invoice is generated first.</p>
+              </div>
             </div>
 
             <div className="pt-4 border-t border-slate-100 flex items-center gap-3 justify-end">

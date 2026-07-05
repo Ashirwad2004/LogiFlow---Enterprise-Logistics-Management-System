@@ -10,8 +10,10 @@ from app.models.invoice import Invoice
 from app.models.payment import Payment
 from app.models.shipment import Shipment
 from app.models.eway_bill import EWayBill
+from app.models.e_invoice import EInvoice
 from app.schemas.billing import InvoiceCreate, InvoiceResponse, PaymentCreate, PaymentResponse
 from app.schemas.eway_bill import EWayBillCreate, EWayBillResponse, EWayBillUpdateVehicle, EWayBillCancel
+from app.schemas.e_invoice import EInvoiceCreate, EInvoiceResponse
 
 router = APIRouter()
 
@@ -35,6 +37,16 @@ def get_invoice_eway_bill(
     eway_bill = db.query(EWayBill).filter(EWayBill.invoice_id == invoice_id).first()
     if not eway_bill:
         raise HTTPException(status_code=404, detail="e-Way Bill not generated for this invoice.")
+        
+    # Check if we should update status to "DIS" dynamically
+    if eway_bill.status == "active_part_a" and eway_bill.generated_at:
+        days_elapsed = (datetime.utcnow() - eway_bill.generated_at).days
+        if days_elapsed >= 15:
+            eway_bill.status = "DIS"
+            db.add(eway_bill)
+            db.commit()
+            db.refresh(eway_bill)
+            
     return eway_bill
 
 @router.post("/invoices/{invoice_id}/eway-bill", response_model=EWayBillResponse, status_code=status.HTTP_201_CREATED)
@@ -46,7 +58,10 @@ def generate_eway_bill(
 ):
     """
     Submit E-Way Bill details to the government portal sandbox and register in database.
+    Enforces compliance validations mimicking the NIC portal.
     """
+    from app.models.company import Company
+    
     # Verify invoice belongs to the company
     invoice = db.query(Invoice).join(Shipment, Invoice.shipment_id == Shipment.id).filter(
         Invoice.id == invoice_id,
@@ -56,37 +71,116 @@ def generate_eway_bill(
         raise HTTPException(status_code=404, detail="Invoice not found or access denied.")
         
     existing_ewb = db.query(EWayBill).filter(EWayBill.invoice_id == invoice_id).first()
-    if existing_ewb:
+    if existing_ewb and existing_ewb.status != "cancelled":
         raise HTTPException(status_code=400, detail="e-Way Bill already exists for this invoice.")
         
+    company = db.query(Company).filter(Company.id == current_user.company_id).first()
+    is_e_invoice_enabled = company.is_e_invoice_enabled if company else False
+    
+    # Resolve dynamic values for validation and persistence
+    doc_date_str = eway_bill_in.doc_date or invoice.issued_at.strftime("%Y-%m-%d")
+    total_value = eway_bill_in.total_value or float(invoice.subtotal)
+    tot_inv_value = eway_bill_in.tot_inv_value or float(invoice.total_amount)
+    
+    consignor_gstin = eway_bill_in.consignor_gstin
+    consignee_gstin = eway_bill_in.consignee_gstin
+    
+    act_from_state_code = eway_bill_in.act_from_state_code or (int(consignor_gstin[:2]) if consignor_gstin != "URP" else 27)
+    act_to_state_code = eway_bill_in.act_to_state_code or (int(consignee_gstin[:2]) if consignee_gstin != "URP" else 27)
+    
+    from_pincode = eway_bill_in.from_pincode or "400001"
+    to_pincode = eway_bill_in.to_pincode or "560001"
+    
+    cgst_value = eway_bill_in.cgst_value or (float(invoice.tax_amount) / 2 if act_from_state_code == act_to_state_code else 0.0)
+    sgst_value = eway_bill_in.sgst_value or (float(invoice.tax_amount) / 2 if act_from_state_code == act_to_state_code else 0.0)
+    igst_value = eway_bill_in.igst_value or (float(invoice.tax_amount) if act_from_state_code != act_to_state_code else 0.0)
+    
+    item_count = len(invoice.shipment.items) if invoice.shipment and invoice.shipment.items else 1
+
+    # Check for E-Invoice block (if Supplier is e-invoice enabled, they must have generated E-Invoice first)
+    if is_e_invoice_enabled:
+        if (eway_bill_in.sub_supply_type in ["B2B", "Export"]) and (eway_bill_in.doc_type == "Tax Invoice"):
+            # Check if IRN exists
+            if not invoice.e_invoice:
+                raise HTTPException(
+                    status_code=400,
+                    detail="E-Way Bill generation blocked. Supplier is enabled for E-Invoice. "
+                           "Please generate the E-Invoice IRN first, then generate the E-Way Bill with reference to the IRN."
+                )
+
     from app.services.eway_bill_api import EWayBillGovernmentAPI
     try:
         # Handshake with mock Government NIC Portal API
         govt_response = EWayBillGovernmentAPI.generate_eway_bill(
-            consignor_gstin=eway_bill_in.consignor_gstin,
-            consignee_gstin=eway_bill_in.consignee_gstin,
+            consignor_gstin=consignor_gstin,
+            consignee_gstin=consignee_gstin,
             hsn_code=eway_bill_in.hsn_code,
             invoice_number=invoice.invoice_number,
-            invoice_total=float(invoice.total_amount),
+            invoice_total=tot_inv_value,
             distance_km=eway_bill_in.distance_km,
-            vehicle_number=eway_bill_in.vehicle_number
+            vehicle_number=eway_bill_in.vehicle_number,
+            company_is_e_invoice_enabled=is_e_invoice_enabled,
+            supply_type=eway_bill_in.supply_type,
+            sub_supply_type=eway_bill_in.sub_supply_type,
+            doc_type=eway_bill_in.doc_type,
+            doc_date_str=doc_date_str,
+            from_pincode=from_pincode,
+            to_pincode=to_pincode,
+            act_from_state_code=act_from_state_code,
+            act_to_state_code=act_to_state_code,
+            trans_mode=eway_bill_in.trans_mode,
+            vehicle_type=eway_bill_in.vehicle_type,
+            trans_doc_no=eway_bill_in.trans_doc_no,
+            trans_doc_date_str=eway_bill_in.trans_doc_date,
+            cess_non_advol_value=eway_bill_in.cess_non_advol_value,
+            other_value=eway_bill_in.other_value,
+            total_value=total_value,
+            cgst_value=cgst_value,
+            sgst_value=sgst_value,
+            igst_value=igst_value,
+            cess_value=eway_bill_in.cess_value,
+            tot_inv_value=tot_inv_value,
+            uqc_code=eway_bill_in.uqc_code,
+            item_count=item_count,
+            transporter_id=eway_bill_in.transporter_id
         )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
         
     db_ewb = EWayBill(
         invoice_id=invoice_id,
-        consignor_gstin=eway_bill_in.consignor_gstin,
-        consignee_gstin=eway_bill_in.consignee_gstin,
+        consignor_gstin=consignor_gstin,
+        consignee_gstin=consignee_gstin,
         hsn_code=eway_bill_in.hsn_code,
         transporter_id=eway_bill_in.transporter_id,
         vehicle_number=eway_bill_in.vehicle_number,
-        distance_km=eway_bill_in.distance_km,
+        distance_km=govt_response["distance_km"],
         ewb_number=govt_response["ewb_number"],
         status=govt_response["status"],
         valid_until=govt_response["valid_until"],
         qr_code_data=govt_response["qr_code_data"],
-        generated_at=govt_response["generated_at"]
+        generated_at=govt_response["generated_at"],
+        
+        # Extended fields
+        supply_type=eway_bill_in.supply_type,
+        sub_supply_type=eway_bill_in.sub_supply_type,
+        doc_type=eway_bill_in.doc_type,
+        doc_date=datetime.strptime(doc_date_str, "%Y-%m-%d") if doc_date_str else None,
+        from_pincode=from_pincode,
+        to_pincode=to_pincode,
+        trans_mode=eway_bill_in.trans_mode,
+        uqc_code=eway_bill_in.uqc_code,
+        vehicle_type=eway_bill_in.vehicle_type,
+        trans_doc_no=eway_bill_in.trans_doc_no,
+        trans_doc_date=datetime.strptime(eway_bill_in.trans_doc_date, "%Y-%m-%d") if eway_bill_in.trans_doc_date else None,
+        cess_non_advol_value=eway_bill_in.cess_non_advol_value,
+        other_value=eway_bill_in.other_value,
+        total_value=total_value,
+        cgst_value=cgst_value,
+        sgst_value=sgst_value,
+        igst_value=igst_value,
+        cess_value=eway_bill_in.cess_value,
+        tot_inv_value=tot_inv_value
     )
     db.add(db_ewb)
     
@@ -108,12 +202,16 @@ def generate_eway_bill(
     
     # Trigger notification
     from app.services.notifications import trigger_notification
+    msg = f"Government E-Way Bill #{db_ewb.ewb_number} generated for invoice {invoice.invoice_number}."
+    if govt_response.get("alerts"):
+        msg += " Alerts: " + "; ".join(govt_response["alerts"])
+        
     trigger_notification(
         db=db,
         company_id=current_user.company_id,
         trigger_event="eway_bill_generated",
         title="e-Way Bill Generated Successfully",
-        message=f"Government E-Way Bill #{db_ewb.ewb_number} generated for invoice {invoice.invoice_number}."
+        message=msg
     )
     
     db.commit()
@@ -225,6 +323,101 @@ def update_eway_bill_vehicle(
     db.commit()
     db.refresh(eway_bill)
     return eway_bill
+
+@router.post("/invoices/{invoice_id}/e-invoice", response_model=EInvoiceResponse, status_code=status.HTTP_201_CREATED)
+def generate_e_invoice(
+    invoice_id: UUID,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(check_role(["Accountant", "Company Admin", "Super Admin"]))
+):
+    """
+    Generate an E-Invoice IRN and register it with the government mock sandbox.
+    """
+    # Verify invoice belongs to the company
+    invoice = db.query(Invoice).join(Shipment, Invoice.shipment_id == Shipment.id).filter(
+        Invoice.id == invoice_id,
+        Shipment.company_id == current_user.company_id
+    ).first()
+    if not invoice:
+        raise HTTPException(status_code=404, detail="Invoice not found or access denied.")
+        
+    existing_e_inv = db.query(EInvoice).filter(EInvoice.invoice_id == invoice_id).first()
+    if existing_e_inv:
+        raise HTTPException(status_code=400, detail="E-Invoice already exists for this invoice.")
+        
+    # Get GSTINs from company and customer
+    from app.models.company import Company
+    from app.models.customer import Customer
+    company = db.query(Company).filter(Company.id == current_user.company_id).first()
+    customer = db.query(Customer).filter(Customer.id == invoice.shipment.customer_id).first()
+    
+    supplier_gstin = company.gst_number if company else "27AAAAA1111A1Z1"
+    recipient_gstin = customer.gst_number if customer else "URP"
+    
+    from app.services.e_invoice_api import EInvoiceGovernmentAPI
+    try:
+        govt_response = EInvoiceGovernmentAPI.generate_e_invoice(
+            supplier_gstin=supplier_gstin,
+            recipient_gstin=recipient_gstin,
+            doc_type="Tax Invoice",
+            doc_number=invoice.invoice_number,
+            invoice_total=float(invoice.total_amount),
+            tax_amount=float(invoice.tax_amount)
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+        
+    db_e_inv = EInvoice(
+        invoice_id=invoice_id,
+        irn=govt_response["irn"],
+        ack_no=govt_response["ack_no"],
+        ack_date=govt_response["ack_date"],
+        status=govt_response["status"],
+        signed_invoice=govt_response["signed_invoice"],
+        signed_qr_code=govt_response["signed_qr_code"]
+    )
+    db.add(db_e_inv)
+    
+    # Audit log E-Invoice generation
+    from app.services.audit import log_action
+    log_action(
+        db=db,
+        user_id=current_user.id,
+        action="generate_e_invoice",
+        table_name="e_invoices",
+        record_id=db_e_inv.id,
+        new_values={
+            "irn": db_e_inv.irn,
+            "ack_no": db_e_inv.ack_no,
+            "invoice_number": invoice.invoice_number
+        }
+    )
+    
+    db.commit()
+    db.refresh(db_e_inv)
+    return db_e_inv
+
+@router.get("/invoices/{invoice_id}/e-invoice", response_model=EInvoiceResponse)
+def get_e_invoice(
+    invoice_id: UUID,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(check_role(["Accountant", "Company Admin", "Super Admin"]))
+):
+    """
+    Get the E-Invoice associated with an invoice.
+    """
+    # Verify invoice belongs to the company
+    invoice = db.query(Invoice).join(Shipment, Invoice.shipment_id == Shipment.id).filter(
+        Invoice.id == invoice_id,
+        Shipment.company_id == current_user.company_id
+    ).first()
+    if not invoice:
+        raise HTTPException(status_code=404, detail="Invoice not found or access denied.")
+        
+    e_invoice = db.query(EInvoice).filter(EInvoice.invoice_id == invoice_id).first()
+    if not e_invoice:
+        raise HTTPException(status_code=404, detail="E-Invoice not generated for this invoice.")
+    return e_invoice
 
 @router.get("/invoices/unbilled-shipments")
 def get_unbilled_shipments(

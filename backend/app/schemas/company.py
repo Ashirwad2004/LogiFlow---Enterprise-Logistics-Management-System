@@ -15,6 +15,7 @@ class CompanyBase(BaseModel):
     base_rate: Optional[float] = 50.00
     rate_per_kg: Optional[float] = 0.50
     address: Optional[str] = None
+    is_e_invoice_enabled: Optional[bool] = False
 
 class CompanyCreate(CompanyBase):
     pass
@@ -31,6 +32,7 @@ class CompanyUpdate(BaseModel):
     base_rate: Optional[float] = None
     rate_per_kg: Optional[float] = None
     address: Optional[str] = None
+    is_e_invoice_enabled: Optional[bool] = None
 
 class CompanyResponse(CompanyBase):
     id: UUID

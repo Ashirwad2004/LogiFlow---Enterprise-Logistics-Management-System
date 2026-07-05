@@ -285,7 +285,8 @@ def update_company(
         "currency": company.currency,
         "base_rate": float(company.base_rate) if company.base_rate is not None else 50.00,
         "rate_per_kg": float(company.rate_per_kg) if company.rate_per_kg is not None else 0.50,
-        "address": company.address
+        "address": company.address,
+        "is_e_invoice_enabled": company.is_e_invoice_enabled
     }
     
     update_data = data.model_dump(exclude_unset=True)
@@ -306,7 +307,8 @@ def update_company(
         "currency": company.currency,
         "base_rate": float(company.base_rate) if company.base_rate is not None else 50.00,
         "rate_per_kg": float(company.rate_per_kg) if company.rate_per_kg is not None else 0.50,
-        "address": company.address
+        "address": company.address,
+        "is_e_invoice_enabled": company.is_e_invoice_enabled
     }
     
     from app.services.audit import log_action
