@@ -17,7 +17,9 @@ import {
   ShieldCheck,
   Building,
   CheckCircle2,
-  Download
+  Download,
+  Copy,
+  Check
 } from 'lucide-react';
 
 const API_BASE_URL = 'http://127.0.0.1:8000/api/v1';
@@ -32,6 +34,7 @@ interface TrackingData {
   estimated_delivery: string | null;
   actual_delivery: string | null;
   proof_of_delivery_url: string | null;
+  qr_code_data: string | null;
   items: Array<{
     description: string;
     quantity: number;
@@ -51,6 +54,7 @@ interface TrackingData {
     subtotal: number;
     tax_amount: number;
     total_amount: number;
+    outstanding_balance: number;
     status: string;
     issued_at: string;
     company: {
@@ -73,6 +77,7 @@ const PublicTrack: React.FC = () => {
   const currencySymbol = (trackingData?.invoice?.company as any)?.currency === 'INR' ? '₹' : '$';
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const [copied, setCopied] = useState(false);
   
   const mapContainerRef = useRef<HTMLDivElement | null>(null);
   const mapInstanceRef = useRef<any>(null);
@@ -99,6 +104,12 @@ const PublicTrack: React.FC = () => {
       fetchTracking(routeParam);
     }
   }, [routeParam]);
+
+  const copyPin = (pin: string) => {
+    navigator.clipboard.writeText(pin);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  };
 
   const handleSearchSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -489,6 +500,105 @@ const PublicTrack: React.FC = () => {
 
             {/* Right Column: Print Invoice Panel */}
             <div className="lg:col-span-1 print:block">
+              {/* Secure Handover Verification Card */}
+              {trackingData.qr_code_data && (
+                <div className="bg-slate-900 text-white rounded-xl shadow-lg border border-slate-800 p-6 mb-6 relative overflow-hidden print:hidden">
+                  {/* Decorative background gradient */}
+                  <div className="absolute top-0 right-0 w-32 h-32 bg-blue-500/10 rounded-full blur-2xl pointer-events-none" />
+                  
+                  <div className="flex items-center justify-between mb-4">
+                    <div className="flex items-center gap-2">
+                      <div className="p-1.5 rounded-lg bg-blue-500/20 text-blue-400">
+                        <ShieldCheck className="w-5 h-5" />
+                      </div>
+                      <div>
+                        <h4 className="font-bold text-sm tracking-tight">Secure Handover</h4>
+                        <p className="text-[10px] text-slate-400">Verification Active</p>
+                      </div>
+                    </div>
+                    {trackingData.status === 'delivered' ? (
+                      <span className="flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-emerald-500/20 text-emerald-400 border border-emerald-500/30">
+                        <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
+                        VERIFIED
+                      </span>
+                    ) : (
+                      <span className="flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-blue-500/20 text-blue-400 border border-blue-500/30">
+                        <span className="w-1.5 h-1.5 rounded-full bg-blue-400 animate-pulse" />
+                        READY
+                      </span>
+                    )}
+                  </div>
+
+                  {trackingData.status === 'delivered' ? (
+                    <div className="py-4 text-center space-y-3">
+                      <div className="w-14 h-14 bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 rounded-full flex items-center justify-center mx-auto shadow-inner animate-bounce">
+                        <CheckCircle2 className="w-8 h-8" />
+                      </div>
+                      <div>
+                        <p className="font-bold text-sm text-slate-200">Handover Completed</p>
+                        <p className="text-xs text-slate-400 mt-1 px-4 leading-relaxed">
+                          This shipment has been verified via secure QR / OTP PIN check and delivered successfully.
+                        </p>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="space-y-5">
+                      <p className="text-xs text-slate-300 leading-relaxed">
+                        To protect your package against theft, please show this QR code to the driver or provide the 6-digit PIN upon arrival.
+                      </p>
+
+                      {/* QR Code Container with Camera Alignment corners */}
+                      <div className="flex justify-center py-2">
+                        <div className="relative p-3 bg-white rounded-lg border border-slate-800 shadow-inner group">
+                          {/* Corner alignment markers */}
+                          <div className="absolute top-0 left-0 w-3 h-3 border-t-2 border-l-2 border-emerald-500 rounded-tl-sm -translate-x-1 -translate-y-1" />
+                          <div className="absolute top-0 right-0 w-3 h-3 border-t-2 border-r-2 border-emerald-500 rounded-tr-sm translate-x-1 -translate-y-1" />
+                          <div className="absolute bottom-0 left-0 w-3 h-3 border-b-2 border-l-2 border-emerald-500 rounded-bl-sm -translate-x-1 translate-y-1" />
+                          <div className="absolute bottom-0 right-0 w-3 h-3 border-b-2 border-r-2 border-emerald-500 rounded-br-sm translate-x-1 translate-y-1" />
+                          
+                          <img
+                            src={`https://api.qrserver.com/v1/create-qr-code/?size=140x140&data=${encodeURIComponent(trackingData.qr_code_data)}`}
+                            alt="Verification QR Code"
+                            className="w-32 h-32 select-none"
+                          />
+                        </div>
+                      </div>
+
+                      {/* OTP PIN Container */}
+                      <div className="space-y-2">
+                        <span className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider text-center">
+                          Backup Handover OTP PIN
+                        </span>
+                        <div className="flex items-center justify-center gap-2">
+                          {trackingData.qr_code_data.split('-').slice(-1)[0].split('').map((char, idx) => (
+                            <span
+                              key={idx}
+                              className="w-8 h-10 bg-slate-800 border border-slate-700 rounded-md flex items-center justify-center font-mono font-bold text-lg text-slate-100 select-all animate-fade-in"
+                            >
+                              {char}
+                            </span>
+                          ))}
+                          
+                          <button
+                            type="button"
+                            onClick={() => copyPin(trackingData.qr_code_data!.split('-').slice(-1)[0])}
+                            className="ml-2 p-2 rounded-lg bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-350 hover:text-white transition-colors relative group cursor-pointer"
+                            title="Copy PIN"
+                          >
+                            {copied ? <Check className="w-4 h-4 text-emerald-400" /> : <Copy className="w-4 h-4" />}
+                            {copied && (
+                              <span className="absolute -top-8 left-1/2 -translate-x-1/2 bg-slate-850 border border-slate-700 text-[10px] text-emerald-400 px-2 py-0.5 rounded shadow-sm whitespace-nowrap z-50">
+                                Copied!
+                              </span>
+                            )}
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+
               {trackingData.invoice ? (
                 <div className="bg-white rounded-xl shadow-md border border-slate-200 overflow-hidden sticky top-24 print:border-none print:shadow-none print:static print:overflow-visible">
                   
@@ -523,8 +633,12 @@ const PublicTrack: React.FC = () => {
                         <span className="text-[10px] text-slate-400 uppercase tracking-widest font-semibold print:text-slate-500">Tax Invoice Receipt</span>
                       </div>
                       <div className="text-right text-xs">
-                        <span className="px-2 py-0.5 text-[10px] font-bold border border-slate-350 bg-slate-50 rounded uppercase print:border-black">
-                          {trackingData.invoice.status}
+                        <span className={`px-2.5 py-1 text-[10px] font-bold border rounded-md uppercase print:border-black ${
+                          trackingData.invoice.status.toLowerCase() === 'paid' ? 'bg-emerald-50 text-emerald-700 border-emerald-200' :
+                          trackingData.invoice.status.toLowerCase() === 'partially_paid' ? 'bg-blue-50 text-blue-700 border-blue-200' :
+                          'bg-amber-50 text-amber-700 border-amber-250'
+                        }`}>
+                          {trackingData.invoice.status.replace('_', ' ')}
                         </span>
                         <p className="text-[10px] text-slate-400 mt-2">Date: {new Date(trackingData.invoice.issued_at).toLocaleDateString()}</p>
                       </div>
@@ -581,6 +695,18 @@ const PublicTrack: React.FC = () => {
                           <span>Total Amount:</span>
                           <span>{currencySymbol}{trackingData.invoice.total_amount.toFixed(2)}</span>
                         </div>
+                        {trackingData.invoice.status.toLowerCase() !== 'paid' && (
+                          <>
+                            <div className="flex justify-between text-xs font-semibold text-emerald-600">
+                              <span>Total Paid:</span>
+                              <span>{currencySymbol}{(trackingData.invoice.total_amount - trackingData.invoice.outstanding_balance).toFixed(2)}</span>
+                            </div>
+                            <div className="flex justify-between text-xs font-bold text-rose-600 border-t border-dashed border-rose-100 pt-1.5">
+                              <span>Outstanding Due:</span>
+                              <span>{currencySymbol}{trackingData.invoice.outstanding_balance.toFixed(2)}</span>
+                            </div>
+                          </>
+                        )}
                       </div>
                     </div>
 

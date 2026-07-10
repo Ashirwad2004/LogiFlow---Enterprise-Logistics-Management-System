@@ -20,6 +20,9 @@ class Settings(BaseSettings):
     ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 60 * 24 * 8
     REFRESH_TOKEN_EXPIRE_DAYS: int = 7
+    
+    SUPABASE_URL: str = "https://vxrbizshbnjfpcgguzrd.supabase.co"
+    SUPABASE_ANON_KEY: str = ""
 
     model_config = {
         "env_file": ".env",

@@ -16,6 +16,7 @@ const DriversList = lazy(() => import('./features/fleet/DriversList'));
 const VehiclesList = lazy(() => import('./features/fleet/VehiclesList'));
 const InvoicesList = lazy(() => import('./features/billing/InvoicesList'));
 const WarehousesList = lazy(() => import('./features/warehouses/WarehousesList'));
+const ProductsStore = lazy(() => import('./features/products/ProductsStore'));
 const SettingsPage = lazy(() => import('./features/settings/SettingsPage'));
 const PublicTrack = lazy(() => import('./features/tracking/PublicTrack'));
 const AuditLogs = lazy(() => import('./features/audit/AuditLogs'));
@@ -67,6 +68,7 @@ const AppRoutes = () => {
             <Route path="/fleet" element={<DriversList />} />
             <Route path="/vehicles" element={<VehiclesList />} />
             <Route path="/warehouses" element={<WarehousesList />} />
+            <Route path="/inventory" element={<ProductsStore />} />
             <Route path="/billing" element={<InvoicesList />} />
             <Route path="/customers" element={<CustomersList />} />
             <Route path="/settings" element={<SettingsPage />} />

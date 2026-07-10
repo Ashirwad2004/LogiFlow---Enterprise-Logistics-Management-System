@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import { useAuth } from '../../core/AuthContext';
-import api from '../../core/api';
+import { supabase } from '../../core/supabaseClient';
 import { PackageSearch, Loader2 } from 'lucide-react';
 
 const LoginPage: React.FC = () => {
@@ -18,27 +18,23 @@ const LoginPage: React.FC = () => {
     setIsLoading(true);
 
     try {
-      const formData = new URLSearchParams();
-      formData.append('username', email);
-      formData.append('password', password);
-
-      const response = await api.post('/auth/token', formData, {
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded' }
+      const { data, error: sbError } = await supabase.auth.signInWithPassword({
+        email,
+        password,
       });
 
-      const { access_token, refresh_token } = response.data;
-      login(access_token, refresh_token);
-      navigate('/dashboard');
-    } catch (err: any) {
-      let errorMessage = 'Failed to login. Please check your credentials.';
-      if (err.response?.data?.detail) {
-        if (Array.isArray(err.response.data.detail)) {
-          errorMessage = err.response.data.detail.map((d: any) => d.msg).join(', ');
-        } else if (typeof err.response.data.detail === 'string') {
-          errorMessage = err.response.data.detail;
-        }
+      if (sbError) {
+        throw new Error(sbError.message);
       }
-      setError(errorMessage);
+
+      if (data.session) {
+        login(data.session.access_token, data.session.refresh_token);
+        navigate('/dashboard');
+      } else {
+        throw new Error('Failed to retrieve login session.');
+      }
+    } catch (err: any) {
+      setError(err.message || 'Failed to login. Please check your credentials.');
     } finally {
       setIsLoading(false);
     }

@@ -1334,14 +1334,14 @@ const InvoicesList: React.FC = () => {
               const taxAmount = selectedInvoice.total_amount - subtotal;
               
               return (
-                <div className="p-8 space-y-8 font-sans">
+                <div className="p-8 print:p-4 space-y-8 print:space-y-3 font-sans print:text-xs">
                   {/* Header branding */}
-                  <div className="flex justify-between items-start">
+                  <div className="flex justify-between items-start print:mb-1">
                     <div>
-                      <h2 className="text-2xl font-black text-blue-600 tracking-tight">
+                      <h2 className="text-2xl print:text-lg font-black text-blue-600 tracking-tight">
                         {company?.name || 'LogiFlow'}
                       </h2>
-                      <p className="text-xs text-slate-500 mt-1">Enterprise Logistics Solutions</p>
+                      <p className="text-xs text-slate-500 mt-1 print:text-[10px]">Enterprise Logistics Solutions</p>
                     </div>
                     <div className="text-right">
                       <span className={`px-2.5 py-1 text-xs font-bold uppercase rounded border ${getStatusColor(selectedInvoice.status)}`}>
@@ -1352,15 +1352,15 @@ const InvoicesList: React.FC = () => {
                   </div>
 
                   {/* Addresses */}
-                  <div className="grid grid-cols-2 gap-8 border-t border-slate-100 pt-6">
+                  <div className="grid grid-cols-2 gap-8 print:gap-4 border-t border-slate-100 pt-6 print:pt-2">
                     <div>
-                      <h4 className="text-xs font-bold text-slate-405 uppercase tracking-wider mb-2">Billed By</h4>
+                      <h4 className="text-xs font-bold text-slate-405 uppercase tracking-wider mb-2 print:mb-1">Billed By</h4>
                       <p className="text-sm font-bold text-slate-800">{company?.legal_name || company?.name || 'LogiFlow Enterprise'}</p>
                       <p className="text-xs text-slate-600 mt-1 whitespace-pre-line">{company?.address || '100 Logistics Tech Way\nMumbai, Maharashtra - 400001'}</p>
                       {company?.gst_number && <p className="text-xs text-slate-600 mt-1 font-semibold">GSTIN: {company.gst_number}</p>}
                     </div>
                     <div>
-                      <h4 className="text-xs font-bold text-slate-405 uppercase tracking-wider mb-2">Billed To</h4>
+                      <h4 className="text-xs font-bold text-slate-405 uppercase tracking-wider mb-2 print:mb-1">Billed To</h4>
                       <p className="text-sm font-bold text-slate-800">{invoiceShipment?.customer_name || 'Acme Customer'}</p>
                       <p className="text-xs text-slate-600 mt-1 truncate">{invoiceShipment?.pickup_address || 'Pickup Warehouse'}</p>
                       <p className="text-xs text-slate-650 font-semibold mt-1">Shipment Ref: #{selectedInvoice.shipment_id.substring(0,8)}</p>
@@ -1368,9 +1368,9 @@ const InvoicesList: React.FC = () => {
                   </div>
 
                   {/* Details list */}
-                  <div className="border-t border-slate-100 pt-6">
-                    <h4 className="text-xs font-bold text-slate-405 uppercase tracking-wider mb-4">Shipment Details</h4>
-                    <table className="min-w-full text-sm">
+                  <div className="border-t border-slate-100 pt-6 print:pt-2">
+                    <h4 className="text-xs font-bold text-slate-405 uppercase tracking-wider mb-4 print:mb-1">Shipment Details</h4>
+                    <table className="min-w-full text-sm print:text-xs">
                       <thead>
                         <tr className="border-b border-slate-100 text-slate-500 pb-2">
                           <th className="text-left font-semibold pb-2">Milestone / Description</th>
@@ -1379,21 +1379,51 @@ const InvoicesList: React.FC = () => {
                         </tr>
                       </thead>
                       <tbody>
-                        <tr className="border-b border-slate-100">
-                          <td className="py-4">
-                            <p className="font-semibold text-slate-800 font-mono">Standard Freight Cargo Delivery</p>
-                            <p className="text-xs text-slate-505 mt-1 max-w-sm truncate">Pickup: {invoiceShipment?.pickup_address}</p>
-                            <p className="text-xs text-slate-505 max-w-sm truncate">Delivery: {invoiceShipment?.delivery_address}</p>
-                          </td>
-                          <td className="py-4 text-right font-mono text-xs">{invoiceShipment?.tracking_number}</td>
-                          <td className="py-4 text-right font-bold text-slate-800">{currencySymbol}{subtotal.toFixed(2)}</td>
-                        </tr>
+                        {invoiceShipment?.items && invoiceShipment.items.length > 0 ? (
+                          invoiceShipment.items.map((item: any, idx: number) => (
+                            <tr key={item.id || idx} className="border-b border-slate-100">
+                              <td className="py-4 print:py-1.5 text-left">
+                                <p className="font-semibold text-slate-800 font-mono">{item.description}</p>
+                                <div className="text-xs text-slate-500 mt-1 flex flex-wrap items-center gap-2">
+                                  <span>Qty: <span className="font-bold text-slate-700">{item.quantity}</span></span>
+                                  <span>|</span>
+                                  <span>Weight: <span className="font-bold text-slate-700">{item.weight_kg} kg</span></span>
+                                  {item.rack?.code && (
+                                    <>
+                                      <span>|</span>
+                                      <span className="px-1.5 py-0.5 rounded bg-blue-50 text-blue-700 font-extrabold text-[10px] print:bg-slate-100 print:text-slate-800">
+                                        Rack {item.rack.code}
+                                      </span>
+                                    </>
+                                  )}
+                                </div>
+                                <p className="text-[10px] text-slate-400 mt-1">Pickup: {invoiceShipment?.pickup_address} | Delivery: {invoiceShipment?.delivery_address}</p>
+                              </td>
+                              <td className="py-4 print:py-1.5 text-right font-mono text-xs select-all">
+                                {invoiceShipment?.tracking_number}
+                              </td>
+                              <td className="py-4 print:py-1.5 text-right font-bold text-slate-800">
+                                {currencySymbol}{(subtotal / (invoiceShipment.items.length || 1)).toFixed(2)}
+                              </td>
+                            </tr>
+                          ))
+                        ) : (
+                          <tr className="border-b border-slate-100">
+                            <td className="py-4 print:py-1.5">
+                              <p className="font-semibold text-slate-800 font-mono">Standard Freight Cargo Delivery</p>
+                              <p className="text-xs text-slate-505 mt-1 max-w-sm truncate">Pickup: {invoiceShipment?.pickup_address}</p>
+                              <p className="text-xs text-slate-505 max-w-sm truncate">Delivery: {invoiceShipment?.delivery_address}</p>
+                            </td>
+                            <td className="py-4 print:py-1.5 text-right font-mono text-xs">{invoiceShipment?.tracking_number}</td>
+                            <td className="py-4 print:py-1.5 text-right font-bold text-slate-800">{currencySymbol}{subtotal.toFixed(2)}</td>
+                          </tr>
+                        )}
                       </tbody>
                     </table>
                   </div>
 
                   {/* Calculations summary & Payment history log */}
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-8 pt-4">
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-8 print:gap-4 pt-4 print:pt-2">
                     {/* Payments History log */}
                     <div className="space-y-3">
                       <h4 className="text-xs font-bold text-slate-405 uppercase tracking-wider flex items-center">
@@ -1411,7 +1441,7 @@ const InvoicesList: React.FC = () => {
                       ) : (
                         <div className="space-y-2 max-h-40 overflow-y-auto pr-1">
                           {paymentHistory.map((p) => (
-                            <div key={p.id} className="bg-slate-50 border border-slate-150 rounded-lg p-2.5 text-2xs flex justify-between items-center hover:bg-slate-100/70 transition-colors">
+                            <div key={p.id} className="bg-slate-50 border border-slate-150 rounded-lg p-2.5 print:p-1.5 text-2xs flex justify-between items-center hover:bg-slate-100/70 transition-colors">
                               <div>
                                 <p className="font-bold text-slate-700">{getMethodLabel(p.payment_method)}</p>
                                 {p.transaction_reference && (
@@ -1432,7 +1462,7 @@ const InvoicesList: React.FC = () => {
                     </div>
 
                     {/* Cost summary table */}
-                    <div className="space-y-2.5 text-sm ml-auto w-full max-w-xs">
+                    <div className="space-y-2.5 print:space-y-1 text-sm print:text-xs ml-auto w-full max-w-xs">
                       <div className="flex justify-between text-slate-650">
                         <span>Subtotal:</span>
                         <span>{currencySymbol}{subtotal.toFixed(2)}</span>
@@ -1454,7 +1484,7 @@ const InvoicesList: React.FC = () => {
 
                   {/* E-Invoice NIC Verification details */}
                   {selectedInvoice.e_invoice ? (
-                    <div className="border-t border-blue-200 bg-blue-50/20 p-4 rounded-xl space-y-3">
+                    <div className="border-t border-blue-200 bg-blue-50/20 p-4 print:p-2.5 rounded-xl space-y-3 print:space-y-1">
                       <h4 className="text-xs font-bold text-blue-800 uppercase tracking-wider flex items-center">
                         <ShieldCheck className="w-4 h-4 mr-1 text-blue-600" /> Government E-Invoice Verification (NIC)
                       </h4>
@@ -1515,7 +1545,7 @@ const InvoicesList: React.FC = () => {
 
                   {/* e-Way Bill NIC Verification details */}
                   {selectedInvoice.eway_bill && selectedInvoice.eway_bill.status !== 'cancelled' && (
-                    <div className="border-t border-amber-250 bg-amber-50/30 p-4 rounded-xl space-y-3">
+                    <div className="border-t border-amber-250 bg-amber-50/30 p-4 print:p-2.5 rounded-xl space-y-3 print:space-y-1">
                       <h4 className="text-xs font-bold text-amber-800 uppercase tracking-wider flex items-center">
                         <ShieldCheck className="w-4 h-4 mr-1 text-amber-600" /> Government e-Way Bill NIC Verification
                       </h4>
@@ -1559,9 +1589,9 @@ const InvoicesList: React.FC = () => {
                   )}
 
                   {/* Receipt footer */}
-                  <div className="border-t border-slate-100 pt-6 text-center text-xs text-slate-400">
+                  <div className="border-t border-slate-100 pt-6 print:pt-3 text-center text-xs print:text-[10px] text-slate-400">
                     <p>Thank you for choosing {company?.name || 'LogiFlow'}. For any questions, contact {company?.support_email || 'support@logiflow.com'}.</p>
-                    <p className="mt-1 font-semibold text-slate-500">This is a computer-generated tax invoice receipt.</p>
+                    <p className="mt-1 print:mt-0 font-semibold text-slate-500">This is a computer-generated tax invoice receipt.</p>
                   </div>
                 </div>
               );

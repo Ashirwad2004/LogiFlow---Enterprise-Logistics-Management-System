@@ -21,6 +21,7 @@ interface TeamMember {
   full_name: string;
   role_name?: string;
   is_active: boolean;
+  hashed_password?: string;
 }
 
 const SettingsPage: React.FC = () => {
@@ -56,6 +57,18 @@ const SettingsPage: React.FC = () => {
   const [submittingMember, setSubmittingMember] = useState(false);
   const [memberError, setMemberError] = useState('');
   const [memberSuccess, setMemberSuccess] = useState('');
+
+  // Editing member states
+  const [selectedMember, setSelectedMember] = useState<TeamMember | null>(null);
+  const [showEditMemberModal, setShowEditMemberModal] = useState(false);
+  const [editName, setEditName] = useState('');
+  const [editEmail, setEditEmail] = useState('');
+  const [editRole, setEditRole] = useState('');
+  const [editIsActive, setEditIsActive] = useState(true);
+  const [editPassword, setEditPassword] = useState('');
+  const [updatingMember, setUpdatingMember] = useState(false);
+  const [editError, setEditError] = useState('');
+  const [editSuccess, setEditSuccess] = useState('');
 
   const fetchAuditLogs = async () => {
     setLoadingLogs(true);
@@ -166,6 +179,51 @@ const SettingsPage: React.FC = () => {
       setMemberError(err.response?.data?.detail || 'Failed to onboard team member.');
     } finally {
       setSubmittingMember(false);
+    }
+  };
+
+  const handleSelectMember = (member: TeamMember) => {
+    setSelectedMember(member);
+    setEditName(member.full_name);
+    setEditEmail(member.email);
+    setEditRole(member.role_name || 'Dispatcher');
+    setEditIsActive(member.is_active);
+    setEditPassword('');
+    setEditError('');
+    setEditSuccess('');
+    setShowEditMemberModal(true);
+  };
+
+  const handleUpdateMember = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!selectedMember) return;
+    setUpdatingMember(true);
+    setEditError('');
+    setEditSuccess('');
+    try {
+      const payload: any = {
+        full_name: editName,
+        email: editEmail,
+        role_name: editRole,
+        is_active: editIsActive,
+      };
+      if (editPassword) {
+        payload.password = editPassword;
+      }
+      const response = await api.put(`/auth/users/${selectedMember.id}`, payload);
+      
+      // Update local team list state
+      setTeam(prev => prev.map(m => m.id === selectedMember.id ? { ...m, ...response.data } : m));
+      setEditSuccess('Member profile updated successfully!');
+      setTimeout(() => {
+        setShowEditMemberModal(false);
+        setSelectedMember(null);
+        setEditSuccess('');
+      }, 1500);
+    } catch (err: any) {
+      setEditError(err.response?.data?.detail || 'Failed to update team member details.');
+    } finally {
+      setUpdatingMember(false);
     }
   };
 
@@ -393,13 +451,14 @@ const SettingsPage: React.FC = () => {
                     <th scope="col" className="px-6 py-3 text-left text-xs font-semibold text-slate-500 uppercase tracking-wider">Member Name</th>
                     <th scope="col" className="px-6 py-3 text-left text-xs font-semibold text-slate-500 uppercase tracking-wider">Email Address</th>
                     <th scope="col" className="px-6 py-3 text-left text-xs font-semibold text-slate-500 uppercase tracking-wider">Security Role</th>
+                    <th scope="col" className="px-6 py-3 text-left text-xs font-semibold text-slate-500 uppercase tracking-wider">Password Hash</th>
                     <th scope="col" className="px-6 py-3 text-left text-xs font-semibold text-slate-500 uppercase tracking-wider">Status</th>
                   </tr>
                 </thead>
                 <tbody className="bg-white divide-y divide-slate-200 text-slate-700">
                   {loadingTeam ? (
                     <tr>
-                      <td colSpan={4} className="px-6 py-10 text-center text-slate-500">
+                      <td colSpan={5} className="px-6 py-10 text-center text-slate-500">
                         <div className="flex justify-center items-center space-x-2">
                           <Loader2 className="w-5 h-5 border-2 border-blue-600 border-t-transparent rounded-full animate-spin" />
                           <span>Loading team directory...</span>
@@ -408,13 +467,17 @@ const SettingsPage: React.FC = () => {
                     </tr>
                   ) : team.length === 0 ? (
                     <tr>
-                      <td colSpan={4} className="px-6 py-10 text-center text-slate-500">
+                      <td colSpan={5} className="px-6 py-10 text-center text-slate-500">
                         No team members registered.
                       </td>
                     </tr>
                   ) : (
                     team.map((member) => (
-                      <tr key={member.id} className="hover:bg-slate-50/50 transition-colors">
+                      <tr
+                        key={member.id}
+                        onClick={() => handleSelectMember(member)}
+                        className="hover:bg-slate-50 transition-colors cursor-pointer"
+                      >
                         <td className="px-6 py-4 whitespace-nowrap">
                           <div className="flex items-center">
                             <div className="w-8 h-8 rounded-full bg-blue-50 text-blue-600 font-bold flex items-center justify-center mr-3 text-xs uppercase">
@@ -423,18 +486,23 @@ const SettingsPage: React.FC = () => {
                             <span className="font-semibold text-slate-900">{member.full_name}</span>
                           </div>
                         </td>
-                        <td className="px-6 py-4 whitespace-nowrap text-slate-500 flex items-center pt-6">
-                          <Mail className="w-3.5 h-3.5 text-slate-400 mr-1.5" />
-                          {member.email}
+                        <td className="px-6 py-4 whitespace-nowrap text-slate-500">
+                          <div className="flex items-center">
+                            <Mail className="w-3.5 h-3.5 text-slate-400 mr-1.5" />
+                            {member.email}
+                          </div>
                         </td>
                         <td className="px-6 py-4 whitespace-nowrap">
                           <span className="px-2.5 py-0.5 inline-flex text-xs leading-5 font-semibold rounded-full bg-blue-100 text-blue-800 border border-blue-200">
                             {member.role_name || 'Member'}
                           </span>
                         </td>
+                        <td className="px-6 py-4 whitespace-nowrap text-xs font-mono text-slate-400 select-all max-w-[150px] truncate">
+                          {member.hashed_password || 'N/A'}
+                        </td>
                         <td className="px-6 py-4 whitespace-nowrap">
                           <span className={`px-2.5 py-0.5 inline-flex text-xs leading-5 font-semibold rounded-full ${
-                            member.is_active ? 'bg-emerald-100 text-emerald-800' : 'bg-slate-100 text-slate-800'
+                            member.is_active ? 'bg-emerald-100 text-emerald-800' : 'bg-rose-100 text-rose-800'
                           }`}>
                             {member.is_active ? 'Active' : 'Suspended'}
                           </span>
@@ -642,7 +710,138 @@ const SettingsPage: React.FC = () => {
           </div>
         </div>
       )}
+      {/* Edit Member Modal */}
+      {showEditMemberModal && selectedMember && (
+        <div className="fixed inset-0 bg-slate-900/50 backdrop-blur-xs flex items-center justify-center p-4 z-50 animate-fade-in">
+          <div className="bg-white rounded-xl shadow-xl border border-slate-200 w-full max-w-md overflow-hidden animate-scale-in">
+            <div className="px-6 py-4 bg-slate-50 border-b border-slate-100 flex justify-between items-center">
+              <h3 className="text-lg font-bold text-slate-800 flex items-center">
+                <Users className="w-5 h-5 mr-2 text-blue-500" /> Manage Team Member
+              </h3>
+              <button
+                type="button"
+                onClick={() => { setShowEditMemberModal(false); setSelectedMember(null); }}
+                className="text-slate-400 hover:text-slate-600 text-lg font-bold cursor-pointer"
+              >
+                &times;
+              </button>
+            </div>
 
+            <form onSubmit={handleUpdateMember} className="p-6 space-y-4">
+              {editError && (
+                <div className="bg-rose-50 border border-rose-200 text-rose-650 text-xs rounded-lg p-3 flex items-center">
+                  <ShieldAlert className="w-4 h-4 mr-2" />
+                  <span>{editError}</span>
+                </div>
+              )}
+
+              {editSuccess && (
+                <div className="bg-emerald-50 border border-emerald-200 text-emerald-750 text-xs rounded-lg p-3 flex items-center">
+                  <CheckCircle2 className="w-4 h-4 mr-2 flex-shrink-0 animate-bounce" />
+                  <span>{editSuccess}</span>
+                </div>
+              )}
+
+              <div>
+                <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wider">Member ID</label>
+                <div className="mt-1 text-slate-500 text-3xs font-mono select-all bg-slate-50 px-2 py-1.5 rounded border border-slate-200">{selectedMember.id}</div>
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wider">Database Password Hash</label>
+                <div className="mt-1 text-slate-405 text-3xs font-mono select-all bg-slate-50 px-2 py-1.5 rounded border border-slate-200 break-all">
+                  {selectedMember.hashed_password || 'Securely Encrypted'}
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wider">Full Name</label>
+                <input
+                  type="text"
+                  required
+                  value={editName}
+                  onChange={(e) => setEditName(e.target.value)}
+                  className="mt-1 block w-full px-3 py-2 border border-slate-300 rounded-lg text-sm bg-white focus:outline-none focus:ring-blue-500"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wider">Email Address</label>
+                <input
+                  type="email"
+                  required
+                  value={editEmail}
+                  onChange={(e) => setEditEmail(e.target.value)}
+                  className="mt-1 block w-full px-3 py-2 border border-slate-300 rounded-lg text-sm bg-white focus:outline-none focus:ring-blue-500"
+                />
+              </div>
+
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wider">System Role</label>
+                  <select
+                    value={editRole}
+                    onChange={(e) => setEditRole(e.target.value)}
+                    className="mt-1 block w-full px-3 py-2 border border-slate-300 rounded-lg text-sm bg-white focus:outline-none focus:ring-blue-500"
+                  >
+                    <option value="Dispatcher">Dispatcher</option>
+                    <option value="Warehouse Mgr">Warehouse Mgr</option>
+                    <option value="Accountant">Accountant</option>
+                    <option value="Customer">Customer Client</option>
+                    <option value="Driver">Driver</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wider">Access Control</label>
+                  <div className="flex items-center h-10 mt-1">
+                    <input
+                      id="editIsActive"
+                      type="checkbox"
+                      checked={editIsActive}
+                      onChange={(e) => setEditIsActive(e.target.checked)}
+                      className="focus:ring-blue-500 h-4 w-4 text-blue-600 border-slate-300 rounded cursor-pointer"
+                    />
+                    <label htmlFor="editIsActive" className="ml-2 text-xs font-semibold text-slate-700 cursor-pointer">
+                      Authorized Active
+                    </label>
+                  </div>
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wider">Change Password (leave blank to keep current)</label>
+                <input
+                  type="password"
+                  placeholder="Enter new password (Min 8 chars, 1 digit, 1 special)"
+                  value={editPassword}
+                  onChange={(e) => setEditPassword(e.target.value)}
+                  className="mt-1 block w-full px-3 py-2 border border-slate-300 rounded-lg text-sm bg-white focus:outline-none focus:ring-blue-500 placeholder-slate-400"
+                />
+              </div>
+
+              <div className="pt-4 border-t border-slate-100 flex justify-end space-x-3">
+                <button
+                  type="button"
+                  onClick={() => { setShowEditMemberModal(false); setSelectedMember(null); }}
+                  className="px-4 py-2 border border-slate-300 rounded-lg text-sm font-medium text-slate-700 hover:bg-slate-50"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={updatingMember}
+                  className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-semibold transition-colors inline-flex items-center cursor-pointer"
+                >
+                  {updatingMember && <Loader2 className="animate-spin -ml-1 mr-1.5 h-4 w-4" />}
+                  Save Updates
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+      
       {/* Delta changes JSON diff modal */}
       {selectedLog && (
         <div className="fixed inset-0 bg-slate-900/50 backdrop-blur-xs flex items-center justify-center p-4 z-50 animate-fade-in">

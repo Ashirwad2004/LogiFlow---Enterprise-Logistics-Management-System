@@ -142,11 +142,10 @@ def get_public_shipment_tracking(
         ShipmentTracking.shipment_id == shipment.id
     ).order_by(ShipmentTracking.timestamp.asc()).all()
     
-    # Fetch invoice if delivered
+    # Fetch invoice if it exists
     invoice_data = None
-    if shipment.status == "delivered":
-        invoice = db.query(Invoice).filter(Invoice.shipment_id == shipment.id).first()
-        if invoice:
+    invoice = db.query(Invoice).filter(Invoice.shipment_id == shipment.id).first()
+    if invoice:
             from app.models.company import Company
             company = db.query(Company).filter(Company.id == shipment.company_id).first()
             invoice_data = {
@@ -155,6 +154,7 @@ def get_public_shipment_tracking(
                 "subtotal": float(invoice.subtotal),
                 "tax_amount": float(invoice.tax_amount),
                 "total_amount": float(invoice.total_amount),
+                "outstanding_balance": float(invoice.outstanding_balance),
                 "status": invoice.status,
                 "issued_at": invoice.issued_at,
                 "company": {
@@ -178,6 +178,7 @@ def get_public_shipment_tracking(
         "estimated_delivery": shipment.estimated_delivery,
         "actual_delivery": shipment.actual_delivery,
         "proof_of_delivery_url": shipment.proof_of_delivery_url,
+        "qr_code_data": shipment.qr_code_data,
         "items": [
             {
                 "description": item.description,

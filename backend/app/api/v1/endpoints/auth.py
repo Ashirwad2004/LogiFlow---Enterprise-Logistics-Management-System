@@ -154,6 +154,12 @@ def login_for_access_token(
             headers={"WWW-Authenticate": "Bearer"},
         )
     
+    if not user.is_active:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="User account is deactivated / suspended."
+        )
+    
     access_token_expires = timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
     access_token = create_access_token(
         subject=str(user.id), expires_delta=access_token_expires
@@ -438,4 +444,93 @@ def create_company_user(data: UserCreateRequest, db: Session = Depends(get_db), 
     )
     
     user.role_name = role.name
+    return user
+
+class UserAdminUpdateRequest(BaseModel):
+    email: Optional[EmailStr] = None
+    full_name: Optional[str] = None
+    role_name: Optional[str] = None
+    is_active: Optional[bool] = None
+    password: Optional[str] = None
+
+@router.put("/users/{user_id}", response_model=UserSchema)
+def update_company_user(
+    user_id: UUID,
+    data: UserAdminUpdateRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """
+    Allows Company Admins and Super Admins to update user details, change passwords, and revoke access.
+    """
+    role = db.query(Role).filter(Role.id == current_user.role_id).first()
+    if not role or role.name not in ["Company Admin", "Super Admin"]:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only administrators can manage and update team members."
+        )
+        
+    user = db.query(User).filter(User.id == user_id, User.company_id == current_user.company_id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found.")
+        
+    if user.id == current_user.id:
+        if data.is_active is False:
+            raise HTTPException(status_code=400, detail="You cannot revoke access for your own account.")
+        if data.role_name and data.role_name != "Company Admin":
+            raise HTTPException(status_code=400, detail="You cannot demote or change your own role.")
+
+    old_values = {
+        "email": user.email,
+        "full_name": user.full_name,
+        "is_active": user.is_active,
+        "role_id": str(user.role_id)
+    }
+    
+    if data.email:
+        # Verify uniqueness
+        existing = db.query(User).filter(User.email == data.email, User.id != user.id).first()
+        if existing:
+            raise HTTPException(status_code=400, detail="Email address is already in use.")
+        user.email = data.email
+        
+    if data.full_name:
+        user.full_name = data.full_name
+        
+    if data.is_active is not None:
+        user.is_active = data.is_active
+        
+    if data.role_name:
+        target_role = db.query(Role).filter(Role.company_id == current_user.company_id, Role.name == data.role_name).first()
+        if not target_role:
+            target_role = Role(company_id=current_user.company_id, name=data.role_name, description=f"{data.role_name} role")
+            db.add(target_role)
+            db.commit()
+            db.refresh(target_role)
+            assign_default_permissions_to_role(db, target_role)
+        user.role_id = target_role.id
+        
+    if data.password:
+        validate_password_strength(data.password)
+        user.hashed_password = get_password_hash(data.password)
+        
+    db.add(user)
+    db.commit()
+    db.refresh(user)
+    
+    # Audit log user updates
+    from app.services.audit import log_action
+    log_action(
+        db=db,
+        user_id=current_user.id,
+        action="update_user",
+        table_name="users",
+        record_id=user.id,
+        old_values=old_values,
+        new_values={"email": user.email, "is_active": user.is_active}
+    )
+    
+    # Expose role name for Pydantic schema
+    updated_role = db.query(Role).filter(Role.id == user.role_id).first()
+    user.role_name = updated_role.name if updated_role else "Member"
     return user

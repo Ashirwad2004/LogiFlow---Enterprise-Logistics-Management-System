@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import api from '../../core/api';
+import { supabase } from '../../core/supabaseClient';
 import { PackageSearch, Loader2, Building, User, Mail, Lock } from 'lucide-react';
 
 const RegisterPage: React.FC = () => {
@@ -24,11 +25,23 @@ const RegisterPage: React.FC = () => {
     setIsLoading(true);
 
     try {
+      // 1. Sign up user in Supabase
+      const { error: sbError } = await supabase.auth.signUp({
+        email: formData.admin_email,
+        password: formData.admin_password,
+      });
+
+      if (sbError) {
+        throw new Error(sbError.message);
+      }
+
+      // 2. Synchronize workspace profile mapping in local Postgres DB
       await api.post('/auth/register', formData);
+      
       // Auto redirect to login with a success param
       navigate('/login?registered=true');
     } catch (err: any) {
-      let errorMessage = 'Failed to register company.';
+      let errorMessage = err.message || 'Failed to register company.';
       if (err.response?.data?.detail) {
         if (Array.isArray(err.response.data.detail)) {
           errorMessage = err.response.data.detail.map((d: any) => d.msg).join(', ');

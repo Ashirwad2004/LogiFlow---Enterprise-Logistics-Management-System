@@ -10,6 +10,7 @@ class UserBase(BaseModel):
     is_active: Optional[bool] = True
     is_verified: Optional[bool] = False
     role_name: Optional[str] = None
+    hashed_password: Optional[str] = None
 
 class UserCreate(UserBase):
     password: str

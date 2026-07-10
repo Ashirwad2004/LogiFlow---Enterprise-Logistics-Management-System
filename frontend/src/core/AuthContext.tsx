@@ -1,5 +1,6 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
 import api from './api';
+import { supabase } from './supabaseClient';
 
 interface User {
   id: string;
@@ -38,12 +39,42 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   };
 
   useEffect(() => {
-    const token = localStorage.getItem('access_token');
-    if (token) {
-      fetchProfile();
-    } else {
-      setLoading(false);
-    }
+    // Initial session load
+    const checkSession = async () => {
+      try {
+        const { data: { session } } = await supabase.auth.getSession();
+        if (session) {
+          localStorage.setItem('access_token', session.access_token);
+          localStorage.setItem('refresh_token', session.refresh_token);
+          await fetchProfile();
+        } else {
+          setLoading(false);
+        }
+      } catch (err) {
+        console.error('Session check failed', err);
+        setLoading(false);
+      }
+    };
+
+    checkSession();
+
+    // Listen to changes
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+      if (session) {
+        localStorage.setItem('access_token', session.access_token);
+        localStorage.setItem('refresh_token', session.refresh_token);
+        fetchProfile();
+      } else {
+        localStorage.removeItem('access_token');
+        localStorage.removeItem('refresh_token');
+        setUser(null);
+        setLoading(false);
+      }
+    });
+
+    return () => {
+      subscription.unsubscribe();
+    };
   }, []);
 
   const login = (access_token: string, refresh_token: string) => {
@@ -52,7 +83,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     fetchProfile();
   };
 
-  const logout = () => {
+  const logout = async () => {
+    try {
+      await supabase.auth.signOut();
+    } catch (err) {
+      console.error('Failed to signOut from supabase', err);
+    }
     localStorage.removeItem('access_token');
     localStorage.removeItem('refresh_token');
     setUser(null);

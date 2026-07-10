@@ -44,6 +44,12 @@ const CreateShipment: React.FC = () => {
   const [warehouses, setWarehouses] = useState<any[]>([]);
   const [loadingWarehouses, setLoadingWarehouses] = useState(true);
 
+  // Predefined products list states
+  const [products, setProducts] = useState<any[]>([]);
+  const [loadingProducts, setLoadingProducts] = useState(true);
+  const [selectedProductId, setSelectedProductId] = useState('');
+  const [isCustomItem, setIsCustomItem] = useState(true);
+
   // Fetch Customers and Warehouses on Mount
   useEffect(() => {
     const fetchCustomers = async () => {
@@ -78,8 +84,20 @@ const CreateShipment: React.FC = () => {
       }
     };
 
+    const fetchProducts = async () => {
+      try {
+        const response = await api.get('/products/');
+        setProducts(response.data);
+      } catch (err) {
+        console.error('Failed to load products', err);
+      } finally {
+        setLoadingProducts(false);
+      }
+    };
+
     fetchCustomers();
     fetchWarehouses();
+    fetchProducts();
   }, []);
 
   const handleWarehouseChange = (whId: string) => {
@@ -115,6 +133,35 @@ const CreateShipment: React.FC = () => {
     }
   };
 
+  const handleProductChange = (prodId: string) => {
+    setSelectedProductId(prodId);
+    if (!prodId || prodId === 'custom') {
+      setIsCustomItem(true);
+      setItem(prev => ({ ...prev, description: '', weight_kg: '' }));
+      return;
+    }
+
+    setIsCustomItem(false);
+    const selectedProd = products.find(p => p.id === prodId);
+    if (selectedProd) {
+      setItem(prev => ({
+        ...prev,
+        description: `[${selectedProd.product_number}] ${selectedProd.name}`,
+        weight_kg: String(selectedProd.weight_kg)
+      }));
+
+      // Auto select origin warehouse branch & pickup address if available!
+      if (selectedProd.warehouse_id) {
+        const wh = warehouses.find(w => w.id === selectedProd.warehouse_id);
+        setFormData(prev => ({
+          ...prev,
+          warehouse_id: selectedProd.warehouse_id,
+          pickup_address: wh ? `${wh.name}, ${wh.address}` : prev.pickup_address
+        }));
+      }
+    }
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!formData.customer_id) {
@@ -133,7 +180,8 @@ const CreateShipment: React.FC = () => {
           {
             description: item.description,
             quantity: Number(item.quantity),
-            weight_kg: Number(item.weight_kg) || 0
+            weight_kg: Number(item.weight_kg) || 0,
+            product_id: isCustomItem ? null : selectedProductId
           }
         ]
       };
@@ -299,19 +347,85 @@ const CreateShipment: React.FC = () => {
             
             <div className="grid grid-cols-1 gap-6 sm:grid-cols-3">
               <div className="sm:col-span-3">
-                <label htmlFor="description" className="block text-sm font-medium text-slate-700">Item Description</label>
+                <label htmlFor="product_select" className="block text-sm font-medium text-slate-700">Predefined Product Selection</label>
                 <div className="mt-1">
-                  <input
-                    type="text"
-                    id="description"
-                    required
-                    value={item.description}
-                    onChange={(e) => setItem({...item, description: e.target.value})}
-                    className="appearance-none block w-full px-3 py-2.5 border border-slate-300 rounded-lg shadow-sm placeholder-slate-400 focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm transition-colors"
-                    placeholder="e.g. Office Supplies"
-                  />
+                  {loadingProducts ? (
+                    <div className="text-sm text-slate-500 py-2.5 pl-2 border border-dashed border-slate-200 rounded-lg">Loading company product store...</div>
+                  ) : (
+                    <select
+                      id="product_select"
+                      value={selectedProductId}
+                      onChange={(e) => handleProductChange(e.target.value)}
+                      className="block w-full px-3 py-2.5 border border-slate-300 rounded-lg shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm bg-white transition-colors font-semibold"
+                    >
+                      <option value="custom">Custom Cargo Item (Enter details manually)</option>
+                      {products.map(p => (
+                        <option key={p.id} value={p.id}>
+                          [{p.product_number}] {p.name} (Stock: {p.quantity} units - ₹{p.price}/unit)
+                        </option>
+                      ))}
+                    </select>
+                  )}
                 </div>
               </div>
+
+              {isCustomItem ? (
+                <div className="sm:col-span-3">
+                  <label htmlFor="description" className="block text-sm font-medium text-slate-700">Item Description</label>
+                  <div className="mt-1">
+                    <input
+                      type="text"
+                      id="description"
+                      required
+                      value={item.description}
+                      onChange={(e) => setItem({...item, description: e.target.value})}
+                      className="appearance-none block w-full px-3 py-2.5 border border-slate-300 rounded-lg shadow-sm placeholder-slate-400 focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm transition-colors"
+                      placeholder="e.g. Office Supplies"
+                    />
+                  </div>
+                </div>
+              ) : (() => {
+                const selectedProd = products.find(p => p.id === selectedProductId);
+                if (!selectedProd) return null;
+                return (
+                  <div className="sm:col-span-3 bg-blue-50/50 border border-blue-200 rounded-xl p-4 space-y-3 animate-fade-in">
+                    <div className="flex justify-between items-start">
+                      <div>
+                        <h4 className="text-xs font-bold text-blue-800 uppercase tracking-wider">Product Allocation Details</h4>
+                        <p className="text-sm font-semibold text-slate-800 mt-1">
+                          [{selectedProd.product_number}] {selectedProd.name}
+                        </p>
+                      </div>
+                      <div className="text-right">
+                        <span className="text-xs font-bold text-slate-500 block">Unit Price: ₹{selectedProd.price.toFixed(2)}</span>
+                        <span className="text-sm font-black text-slate-900 block mt-0.5">Est. Subtotal: ₹{(selectedProd.price * item.quantity).toFixed(2)}</span>
+                      </div>
+                    </div>
+                    
+                    <div className="grid grid-cols-2 gap-4 pt-2 border-t border-blue-100/60 text-xs text-slate-650">
+                      <div>
+                        <span className="font-semibold text-slate-500 block">Stock Location:</span>
+                        <span className="font-medium text-slate-800 block mt-0.5">
+                          {selectedProd.warehouse_name || 'N/A'} &rarr; {selectedProd.section_name || 'N/A'}
+                        </span>
+                      </div>
+                      <div>
+                        <span className="font-semibold text-slate-500 block">Specific Rack Placement:</span>
+                        <span className="inline-flex items-center gap-1 mt-0.5 px-2 py-0.5 rounded bg-blue-100/80 text-blue-800 font-extrabold text-[10px]">
+                          Rack {selectedProd.rack_code || 'N/A'}
+                        </span>
+                      </div>
+                    </div>
+
+                    <div className="pt-2 border-t border-blue-100/60 flex justify-between items-center text-xs">
+                      <span className="text-slate-550">Available Warehouse Capacity:</span>
+                      <span className={`font-bold ${selectedProd.quantity < item.quantity ? 'text-rose-600 font-black animate-pulse' : 'text-emerald-600'}`}>
+                        {selectedProd.quantity} units in stock {selectedProd.quantity < item.quantity && '(INSUFFICIENT STOCK)'}
+                      </span>
+                    </div>
+                  </div>
+                );
+              })()}
 
               <div>
                 <label htmlFor="quantity" className="block text-sm font-medium text-slate-700">Quantity</label>
@@ -323,7 +437,7 @@ const CreateShipment: React.FC = () => {
                     required
                     value={item.quantity}
                     onChange={(e) => setItem({...item, quantity: Number(e.target.value)})}
-                    className="appearance-none block w-full px-3 py-2.5 border border-slate-300 rounded-lg shadow-sm placeholder-slate-400 focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm transition-colors"
+                    className="appearance-none block w-full px-3 py-2.5 border border-slate-300 rounded-lg shadow-sm placeholder-slate-400 focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm transition-colors bg-white"
                   />
                 </div>
               </div>
@@ -335,9 +449,10 @@ const CreateShipment: React.FC = () => {
                     type="number"
                     step="0.1"
                     id="weight_kg"
+                    disabled={!isCustomItem}
                     value={item.weight_kg}
                     onChange={(e) => setItem({...item, weight_kg: e.target.value})}
-                    className="appearance-none block w-full px-3 py-2.5 border border-slate-300 rounded-lg shadow-sm placeholder-slate-400 focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm transition-colors"
+                    className="appearance-none block w-full px-3 py-2.5 border border-slate-300 rounded-lg shadow-sm placeholder-slate-400 focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm transition-colors disabled:bg-slate-50 disabled:text-slate-500 disabled:cursor-not-allowed"
                     placeholder="0.0"
                   />
                 </div>

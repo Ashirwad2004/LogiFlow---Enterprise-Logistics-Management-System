@@ -11,6 +11,7 @@ from app.api.v1.endpoints import warehouses
 from app.api.v1.endpoints import audit_logs
 from app.api.v1.endpoints import notifications
 from app.api.v1.endpoints import saas
+from app.api.v1.endpoints import products
 
 api_router = APIRouter()
 api_router.include_router(auth.router, prefix="/auth", tags=["auth"])
@@ -24,3 +25,4 @@ api_router.include_router(warehouses.router, prefix="/warehouses", tags=["wareho
 api_router.include_router(audit_logs.router, prefix="/audit-logs", tags=["audit-logs"])
 api_router.include_router(notifications.router, prefix="/notifications", tags=["notifications"])
 api_router.include_router(saas.router, prefix="/saas", tags=["saas"])
+api_router.include_router(products.router, prefix="/products", tags=["products"])

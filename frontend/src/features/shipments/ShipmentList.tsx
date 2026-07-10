@@ -11,6 +11,7 @@ interface Shipment {
   delivery_address: string;
   customer_name?: string;
   items: any[];
+  invoice_status?: string;
 }
 
 const ShipmentList: React.FC = () => {
@@ -44,6 +45,15 @@ const ShipmentList: React.FC = () => {
       case 'pending': return 'bg-yellow-100 text-yellow-800 border-yellow-200';
       case 'in_transit': return 'bg-blue-100 text-blue-800 border-blue-200';
       case 'delivered': return 'bg-green-100 text-green-800 border-green-200';
+      default: return 'bg-slate-100 text-slate-800 border-slate-200';
+    }
+  };
+
+  const getBillingStatusColor = (status: string) => {
+    switch(status.toLowerCase()) {
+      case 'paid': return 'bg-green-100 text-green-800 border-green-200';
+      case 'partially_paid': return 'bg-blue-100 text-blue-800 border-blue-200';
+      case 'unpaid': return 'bg-amber-100 text-amber-800 border-amber-250';
       default: return 'bg-slate-100 text-slate-800 border-slate-200';
     }
   };
@@ -94,6 +104,9 @@ const ShipmentList: React.FC = () => {
                   Status
                 </th>
                 <th scope="col" className="px-6 py-3 text-left text-xs font-semibold text-slate-500 uppercase tracking-wider">
+                  Billing
+                </th>
+                <th scope="col" className="px-6 py-3 text-left text-xs font-semibold text-slate-500 uppercase tracking-wider">
                   Destination
                 </th>
                 <th scope="col" className="px-6 py-3 text-left text-xs font-semibold text-slate-500 uppercase tracking-wider">
@@ -107,21 +120,21 @@ const ShipmentList: React.FC = () => {
             <tbody className="bg-white divide-y divide-slate-200">
               {loading ? (
                 <tr>
-                  <td colSpan={5} className="px-6 py-10 text-center text-slate-500">
-                    <div className="flex justify-center items-center space-x-2">
-                      <div className="w-5 h-5 border-2 border-blue-600 border-t-transparent rounded-full animate-spin"></div>
-                      <span>Loading shipments...</span>
-                    </div>
-                  </td>
-                </tr>
-              ) : shipments.length === 0 ? (
-                <tr>
-                  <td colSpan={5} className="px-6 py-10 text-center text-slate-500">
-                    <div className="flex flex-col items-center">
-                      <Package className="w-10 h-10 text-slate-300 mb-3" />
-                      <p>No shipments found.</p>
-                    </div>
-                  </td>
+                    <td colSpan={6} className="px-6 py-10 text-center text-slate-500">
+                      <div className="flex justify-center items-center space-x-2">
+                        <div className="w-5 h-5 border-2 border-blue-600 border-t-transparent rounded-full animate-spin"></div>
+                        <span>Loading shipments...</span>
+                      </div>
+                    </td>
+                  </tr>
+                ) : shipments.length === 0 ? (
+                  <tr>
+                    <td colSpan={6} className="px-6 py-10 text-center text-slate-500">
+                      <div className="flex flex-col items-center">
+                        <Package className="w-10 h-10 text-slate-300 mb-3" />
+                        <p>No shipments found.</p>
+                      </div>
+                    </td>
                 </tr>
               ) : (
                 shipments.map((shipment) => (
@@ -138,10 +151,21 @@ const ShipmentList: React.FC = () => {
                       {shipment.customer_name || 'N/A'}
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap">
-                      <span className={`px-2.5 py-1 inline-flex text-xs leading-5 font-semibold rounded-full border ${getStatusColor(shipment.status)}`}>
-                        {shipment.status.replace('_', ' ').toUpperCase()}
+                    <span className={`px-2.5 py-1 inline-flex text-xs leading-5 font-semibold rounded-full border ${getStatusColor(shipment.status)}`}>
+                      {shipment.status.replace('_', ' ').toUpperCase()}
+                    </span>
+                  </td>
+                  <td className="px-6 py-4 whitespace-nowrap">
+                    {shipment.invoice_status ? (
+                      <span className={`px-2.5 py-1 inline-flex text-xs leading-5 font-semibold rounded-full border ${getBillingStatusColor(shipment.invoice_status)}`}>
+                        {shipment.invoice_status.replace('_', ' ').toUpperCase()}
                       </span>
-                    </td>
+                    ) : (
+                      <span className="px-2.5 py-1 inline-flex text-xs leading-5 font-semibold rounded-full border bg-slate-100 text-slate-800 border-slate-200">
+                        PENDING
+                      </span>
+                    )}
+                  </td>
                     <td className="px-6 py-4 whitespace-nowrap">
                       <div className="flex items-center text-sm text-slate-500">
                         <MapPin className="flex-shrink-0 mr-1.5 h-4 w-4 text-slate-400" />

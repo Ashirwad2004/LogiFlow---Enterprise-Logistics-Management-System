@@ -26,7 +26,8 @@ def create_shipment(
 ) -> Any:
     import random
     tracking_num = generate_tracking_number()
-    qr_data = f"LF-QR-{tracking_num}-{random.randint(1000, 9999)}"
+    pin = f"{random.randint(100000, 999999)}"
+    qr_data = f"LF-QR-{tracking_num}-{pin}"
     
     db_shipment = Shipment(
         company_id=current_user.company_id,
@@ -43,19 +44,70 @@ def create_shipment(
     db.add(db_shipment)
     db.commit()
     db.refresh(db_shipment)
+    # Load company to get custom prefix and tax rate
+    from app.models.company import Company
+    company = db.query(Company).filter(Company.id == current_user.company_id).first()
+    prefix = company.invoice_prefix if company and company.invoice_prefix else "INV"
+    tax_pct = float(company.tax_rate) / 100.0 if company and company.tax_rate is not None else 0.18
+    
+    # Calculate invoice amount
+    base_rate = float(company.base_rate) if company and company.base_rate is not None else 50.00
+    rate_per_kg = float(company.rate_per_kg) if company and company.rate_per_kg is not None else 0.50
+    
+    item_charge = 0.00
     
     # Add Items
     if shipment_in.items:
+        from app.models.product import Product
         for item_in in shipment_in.items:
             db_item = ShipmentItem(
                 shipment_id=db_shipment.id,
                 description=item_in.description,
                 quantity=item_in.quantity,
                 weight_kg=item_in.weight_kg,
-                dimensions=item_in.dimensions
+                dimensions=item_in.dimensions,
+                rack_id=item_in.rack_id,
+                product_id=item_in.product_id
             )
+            # If product_id is supplied, look up the product and subtract inventory
+            if item_in.product_id:
+                product = db.query(Product).filter(
+                    Product.id == item_in.product_id,
+                    Product.company_id == current_user.company_id
+                ).first()
+                if product:
+                    product.quantity = max(0, product.quantity - item_in.quantity)
+                    db.add(product)
+                    
+                    # Auto assign the shipment item to the product's rack
+                    if not db_item.rack_id:
+                        db_item.rack_id = product.rack_id
+            
+            weight = float(item_in.weight_kg or 0.0)
+            qty = int(item_in.quantity or 1)
+            item_charge += qty * weight * rate_per_kg
             db.add(db_item)
         db.commit()
+        
+    subtotal = base_rate + item_charge
+    gst_amount = subtotal * tax_pct
+    total_amount = subtotal + gst_amount
+    
+    # Generate Invoice immediately on booking
+    from app.models.invoice import Invoice
+    from datetime import datetime
+    inv_number = f"{prefix}-{datetime.now().year}-{random.randint(100000, 999999)}"
+    db_invoice = Invoice(
+        shipment_id=db_shipment.id,
+        invoice_number=inv_number,
+        subtotal=subtotal,
+        tax_amount=gst_amount,
+        total_amount=total_amount,
+        status="unpaid",
+        issued_at=datetime.utcnow()
+    )
+    db.add(db_invoice)
+    db.commit()
     
     from app.services.audit import log_action
     log_action(
@@ -95,17 +147,21 @@ def read_shipments(
 ) -> Any:
     from app.models.customer import Customer
     from app.models.driver import Driver
+    from app.models.invoice import Invoice
 
     query = db.query(
         Shipment,
         Customer.name.label("customer_name"),
-        User.full_name.label("driver_name")
+        User.full_name.label("driver_name"),
+        Invoice.status.label("invoice_status")
     ).join(
         Customer, Shipment.customer_id == Customer.id
     ).outerjoin(
         Driver, Shipment.driver_id == Driver.id
     ).outerjoin(
         User, Driver.user_id == User.id
+    ).outerjoin(
+        Invoice, Shipment.id == Invoice.shipment_id
     ).options(
         joinedload(Shipment.items)
     ).filter(
@@ -131,9 +187,10 @@ def read_shipments(
     pages = (total + size - 1) // size
     
     items = []
-    for shipment, cust_name, drv_name in results:
+    for shipment, cust_name, drv_name, inv_status in results:
         shipment.customer_name = cust_name
         shipment.driver_name = drv_name
+        shipment.invoice_status = inv_status
         items.append(shipment)
     
     return {
@@ -152,17 +209,21 @@ def read_shipment(
 ) -> Any:
     from app.models.customer import Customer
     from app.models.driver import Driver
+    from app.models.invoice import Invoice
 
     query = db.query(
         Shipment,
         Customer.name.label("customer_name"),
-        User.full_name.label("driver_name")
+        User.full_name.label("driver_name"),
+        Invoice.status.label("invoice_status")
     ).join(
         Customer, Shipment.customer_id == Customer.id
     ).outerjoin(
         Driver, Shipment.driver_id == Driver.id
     ).outerjoin(
         User, Driver.user_id == User.id
+    ).outerjoin(
+        Invoice, Shipment.id == Invoice.shipment_id
     ).options(
         joinedload(Shipment.items)
     ).filter(
@@ -181,9 +242,10 @@ def read_shipment(
     if not result:
         raise HTTPException(status_code=404, detail="Shipment not found")
         
-    shipment, cust_name, drv_name = result
+    shipment, cust_name, drv_name, inv_status = result
     shipment.customer_name = cust_name
     shipment.driver_name = drv_name
+    shipment.invoice_status = inv_status
     return shipment
 
 @router.put("/{shipment_id}", response_model=ShipmentSchema)
@@ -261,10 +323,15 @@ def update_shipment(
     new_status = update_data.get("status")
     if new_status == "delivered" and old_status != "delivered":
         scanned_qr = update_data.get("qr_code_data")
-        if not scanned_qr or scanned_qr != shipment.qr_code_data:
+        expected_pin = shipment.qr_code_data.split("-")[-1] if (shipment.qr_code_data and "-" in shipment.qr_code_data) else None
+        
+        is_qr_match = (scanned_qr and scanned_qr == shipment.qr_code_data)
+        is_pin_match = (scanned_qr and expected_pin and scanned_qr == expected_pin)
+        
+        if not (is_qr_match or is_pin_match):
             raise HTTPException(
                 status_code=400,
-                detail="Package verification failed. QR code data does not match the shipment record."
+                detail="Package verification failed. Scanned QR code or OTP PIN does not match the shipment record."
             )
             
     for field, value in update_data.items():
@@ -327,12 +394,13 @@ def update_shipment(
     # Notifications trigger transitions
     from app.services.notifications import trigger_notification
     if shipment.status == "in_transit" and old_status != "in_transit":
+        pin_info = f" (Verification PIN: {shipment.qr_code_data.split('-')[-1]})" if (shipment.qr_code_data and "-" in shipment.qr_code_data) else ""
         trigger_notification(
             db=db,
             company_id=shipment.company_id,
             trigger_event="shipment_in_transit",
             title="Shipment In Transit",
-            message=f"Shipment {shipment.tracking_number} is now in transit."
+            message=f"Shipment {shipment.tracking_number} is now in transit.{pin_info}"
         )
     elif shipment.status == "delivered" and old_status != "delivered":
         trigger_notification(
@@ -362,6 +430,7 @@ def update_shipment(
     # Attach names for Pydantic serialization compatibility
     from app.models.customer import Customer
     from app.models.driver import Driver
+    from app.models.invoice import Invoice
     
     cust = db.query(Customer).filter(Customer.id == shipment.customer_id).first()
     shipment.customer_name = cust.name if cust else None
@@ -371,5 +440,8 @@ def update_shipment(
         shipment.driver_name = drv_user.full_name if drv_user else None
     else:
         shipment.driver_name = None
+        
+    inv = db.query(Invoice).filter(Invoice.shipment_id == shipment.id).first()
+    shipment.invoice_status = inv.status if inv else None
         
     return shipment

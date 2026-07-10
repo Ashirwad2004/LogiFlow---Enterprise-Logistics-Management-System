@@ -9,6 +9,7 @@ class ShipmentItemBase(BaseModel):
     weight_kg: Optional[float] = None
     dimensions: Optional[str] = None
     rack_id: Optional[UUID] = None
+    product_id: Optional[UUID] = None
 
 class ShipmentItemCreate(ShipmentItemBase):
     pass
@@ -53,6 +54,7 @@ class Shipment(ShipmentBase):
     
     customer_name: Optional[str] = None
     driver_name: Optional[str] = None
+    invoice_status: Optional[str] = None
 
     class Config:
         from_attributes = True

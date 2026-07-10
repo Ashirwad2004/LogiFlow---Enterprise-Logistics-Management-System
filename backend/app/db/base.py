@@ -16,3 +16,4 @@ from app.models.eway_bill import EWayBill
 from app.models.audit_log import AuditLog
 from app.models.notification import Notification
 from app.models.e_invoice import EInvoice
+from app.models.product import Product

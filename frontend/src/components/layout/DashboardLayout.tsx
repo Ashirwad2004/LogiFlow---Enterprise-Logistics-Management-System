@@ -16,7 +16,8 @@ import {
   Bell,
   ShieldAlert,
   Globe,
-  Briefcase
+  Briefcase,
+  Package
 } from 'lucide-react';
 
 const DashboardLayout: React.FC = () => {
@@ -69,6 +70,7 @@ const DashboardLayout: React.FC = () => {
     { name: 'Drivers', path: '/fleet', icon: Users, roles: ['Company Admin', 'Super Admin', 'Dispatcher'] },
     { name: 'Vehicles', path: '/vehicles', icon: Truck, roles: ['Company Admin', 'Super Admin', 'Dispatcher'] },
     { name: 'Warehouses', path: '/warehouses', icon: Building, roles: ['Company Admin', 'Super Admin', 'Warehouse Mgr', 'Dispatcher'] },
+    { name: 'Store Inventory', path: '/inventory', icon: Package, roles: ['Company Admin', 'Super Admin', 'Warehouse Mgr', 'Accountant', 'Dispatcher'] },
     { name: 'Billing', path: '/billing', icon: Receipt, roles: ['Company Admin', 'Super Admin', 'Accountant', 'Customer'] },
     { name: 'Audit Logs', path: '/audit-logs', icon: ShieldAlert, roles: ['Company Admin', 'Super Admin'] },
     { name: 'SaaS Portal', path: '/saas', icon: Globe, roles: ['Super Admin'] },
@@ -81,9 +83,9 @@ const DashboardLayout: React.FC = () => {
   });
 
   return (
-    <div className="flex h-screen bg-slate-50">
+    <div className="flex h-screen bg-slate-50 print:block print:h-auto print:bg-white">
       {/* Sidebar */}
-      <div className="w-64 bg-white border-r border-slate-200 flex flex-col">
+      <div className="w-64 bg-white border-r border-slate-200 flex flex-col print:hidden">
         <div className="h-16 flex items-center px-6 border-b border-slate-200">
           <PackageSearch className="w-6 h-6 text-blue-600 mr-2" />
           <span className="font-bold text-xl text-slate-900 tracking-tight">LogiFlow</span>
@@ -140,9 +142,9 @@ const DashboardLayout: React.FC = () => {
       </div>
 
       {/* Main content */}
-      <div className="flex-1 flex flex-col overflow-hidden">
+      <div className="flex-1 flex flex-col overflow-hidden print:block print:h-auto print:overflow-visible">
         {/* Top Header */}
-        <header className="h-16 bg-white border-b border-slate-200 flex items-center justify-between px-8 shadow-sm">
+        <header className="h-16 bg-white border-b border-slate-200 flex items-center justify-between px-8 shadow-sm print:hidden">
           <div className="flex items-center space-x-2">
             <span className="text-sm font-bold text-slate-500 uppercase tracking-wider">{user?.company.name} Hub</span>
           </div>
@@ -223,7 +225,7 @@ const DashboardLayout: React.FC = () => {
         </header>
 
         {/* Page content */}
-        <main className="flex-1 overflow-y-auto p-8 bg-slate-50/50">
+        <main className="flex-1 overflow-y-auto p-8 bg-slate-50/50 print:block print:h-auto print:overflow-visible print:p-0">
           <Outlet />
         </main>
       </div>
